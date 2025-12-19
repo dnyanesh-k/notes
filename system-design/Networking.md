@@ -106,7 +106,199 @@ While this model is not directly implemented in the TCP/IP networks that are mos
 - It ensures error-free, in-order delivery of data packets.
 - It uses acknowledgments (ACKs) to confirm receipt.
 - It prevents data overflow by adjusting the data transmission rate according to the receiver's buffer size.
-It prevents network congestion using algorithms like Slow Start, Congestion Avoidance, Fast Retransmit, and Fast Recovery.
-TCP header uses checksum to detect corrupted data and requests retransmission if needed.
-It is used in applications requiring reliable and ordered data transfer, such as web browsing, email, and remote login.
+- It prevents network congestion using algorithms like Slow Start, Congestion Avoidance, Fast Retransmit, and Fast Recovery.
+- TCP header uses checksum to detect corrupted data and requests retransmission if needed.
+- It is used in applications requiring reliable and ordered data transfer, such as web browsing, email, and remote login.
+-The TCP checksum is a method used to detect errors in data transmitted over a network. When data is sent in a TCP segment, the sender calculates a checksum value that represents the data. This value is then included in the segment, and the receiver recalculates the checksum when the data arrives and compares it to the value sent by the sender. If they match then the data is assumed to be error-free, if they don't then it indicates that there was a transmission error, and the data is discarded or retransmitted. The TCP checksum helps ensure that data remains accurate during transmission.
+![TCP](../diagrams/tcp.png)
 
+# UDP
+- User Datagram Protocol (UDP) is a simpler, connectionless internet protocol in which error-checking and recovery services are not required. 
+- With UDP, there is no overhead for opening a connection, maintaining a connection, or terminating a connection. 
+- Data is continuously sent to the recipient, whether or not they receive it.
+- ideal for real-time applications like streaming, gaming, and VoIP where speed matters more than perfect reliability
+- We should use UDP over TCP when we need the lowest latency and late data is worse than the loss of data.
+
+## How it Works (Simplified)
+1. App Data: Application provides data to UDP.
+2. UDP Header: UDP adds its small header (ports, length, checksum) to form a datagram.
+3. IP Layer: Passes to IP for addressing and routing.
+4. Transmission: Datagram travels across the network.
+5. Receiver: UDP at the destination gets the datagram, checks the port, and passes data to the correct application. 
+
+- Unlike TCP, checksum in UDP is optional, it provides no error or flow control, relying on IP/ICMP for error reporting, while port numbers help differentiate user requests.
+![UDP](../diagrams/udp.png)
+
+# TCP vs UDP
+
+|Feature	|TCP	|UDP |
+|-----------|-------|----|
+|Connection |	Requires an established connection	|Connectionless protocol|
+|Guaranteed delivery |	Can guarantee delivery of data	|Cannot guarantee delivery of data|
+|Re-transmission	|Re-transmission of lost packets is possible	|No re-transmission of lost packets|
+|Speed	|Slower than UDP	|Faster than TCP|
+|Broadcasting	|Does not support broadcasting	|Supports broadcasting|
+|Use cases	|HTTPS, HTTP, SMTP, POP, FTP, etc	|Video streaming, DNS, VoIP, etc|
+
+# Domain Name System (DNS)
+- a hierarchical and decentralized naming system used for translating human-readable domain names to IP addresses.
+- eliminates the need for humans to memorize long strings of numbers (IP addresses) by allowing us to use simple names instead
+
+# 🌐 How DNS Resolution and Website Loading Works
+
+## 1. User Request
+- You type `www.example.com` into your browser’s address bar.
+- The browser needs to translate the domain name into an IP address (e.g., `93.184.216.34`).
+
+## 2. Local Cache Check
+- Browser checks its **DNS cache** for a recent entry.
+- If not found, it checks the **operating system cache**.
+- It may also check the **hosts file** (local domain-to-IP mappings).
+
+## 3. DNS Resolver Query
+- If no local match is found, the request is sent to a **DNS Resolver**.
+- The resolver is usually provided by your ISP or a public DNS service (e.g., Google `8.8.8.8`, Cloudflare `1.1.1.1`).
+
+## 4. Hierarchical DNS Search
+The resolver performs a **recursive query** through the DNS hierarchy:
+
+1. **Root DNS Servers**
+   - Resolver asks: “Where can I find `.com` domains?”
+   - Root servers direct it to the **TLD servers** for `.com`.
+
+2. **TLD DNS Servers**
+   - Resolver asks: “Where is `example.com`?”
+   - TLD servers respond with the location of the **Authoritative DNS servers** for `example.com`.
+
+3. **Authoritative DNS Servers**
+   - Resolver asks the authoritative server for `example.com`.
+   - The server returns the actual DNS records (e.g., **A record** for IPv4, **AAAA record** for IPv6).
+   - This contains the IP address of `www.example.com`.
+
+## 5. IP Address Returned
+- The DNS Resolver sends the IP address back to your computer.
+- The IP is cached locally (browser/OS) for faster future lookups.
+- Cache duration depends on the **TTL (Time To Live)** value in the DNS record.
+
+## 6. Website Loads
+- Browser uses the IP address to establish a **TCP connection** with the server.
+- If HTTPS is used:
+  - A **TLS/SSL handshake** secures the connection.
+- Browser sends an **HTTP request** (e.g., `GET /`) to the server.
+- Server responds with **HTML, CSS, JavaScript, and other resources**.
+- Browser renders the page, and you see `www.example.com`.
+
+## 🔑 Key Notes
+- **Caching** occurs at multiple levels (browser, OS, resolver).
+- **Recursive queries** mean the resolver does all the work for you.
+- **CDNs** may return different IPs depending on your location for performance.
+
+![DNS](../diagrams/dns.png)
+
+# Server types
+All DNS servers fall into one of four categories: Recursive resolvers, root nameservers, TLD nameservers, and authoritative nameservers. In a typical DNS lookup (when there is no caching in play), these four DNS servers work together in harmony to complete the task of delivering the IP address for a specified domain to the client (the client is usually a stub resolver - a simple resolver built into an operating system).
+
+## 1. DNS recursive resolver
+A recursive resolver (also known as a DNS recursor) is the first stop in a DNS query. The recursive resolver acts as a middleman between a client and a DNS nameserver. After receiving a DNS query from a web client, a recursive resolver will either respond with cached data, or send a request to a root nameserver, followed by another request to a TLD nameserver, and then one last request to an authoritative nameserver. After receiving a response from the authoritative nameserver containing the requested IP address, the recursive resolver then sends a response to the client.
+
+During this process, the recursive resolver will cache information received from authoritative nameservers. When a client requests the IP address of a domain name that was recently requested by another client, the resolver can circumvent the process of communicating with the nameservers, and just deliver the client the requested record from its cache.
+
+Most Internet users use a recursive resolver provided by their ISP, but there are other options available; for example Cloudflare's 1.1.1.1.
+
+![DNS](../diagrams/domain-name-system.png)
+
+## 2. DNS root nameserver
+The 13 DNS root nameservers are known to every recursive resolver, and they are the first stop in a recursive resolver’s quest for DNS records. A root server accepts a recursive resolver’s query which includes a domain name, and the root nameserver responds by directing the recursive resolver to a TLD nameserver, based on the extension of that domain (.com, .net, .org, etc.). The root nameservers are overseen by a nonprofit called the Internet Corporation for Assigned Names and Numbers (ICANN).
+
+Note that while there are 13 root nameservers, that does not mean that there are only 13 machines in the root nameserver system. There are 13 types of root nameservers, but there are multiple copies of each one all over the world, which use [Anycast routing](https://www.cloudflare.com/learning/cdn/glossary/anycast-network/) to provide speedy responses. If you added up all the instances of root nameservers, you’d have over 600 different servers.
+
+## 3. TLD nameserver
+A TLD nameserver maintains information for all the domain names that share a common domain extension, such as .com, .net, or whatever comes after the last dot in a URL. For example, a .com TLD nameserver contains information for every website that ends in ‘.com’. If a user was searching for google.com, after receiving a response from a root nameserver, the recursive resolver would then send a query to a .com TLD nameserver, which would respond by pointing to the authoritative nameserver (see below) for that domain.
+
+Management of TLD nameservers is handled by the Internet Assigned Numbers Authority (IANA), which is a branch of ICANN. The IANA breaks up the TLD servers into two main groups:
+
+Generic top-level domains: These are domains that are not country specific, some of the best-known generic TLDs include .com, .org, .net, .edu, and .gov.
+Country code top-level domains: These include any domains that are specific to a country or state. Examples include .uk, .us, .ru, and .jp.
+There is actually a third category for infrastructure domains, but it is almost never used. This category was created for the .arpa domain, which was a transitional domain used in the creation of modern DNS; its significance today is mostly historical.
+
+## 4. authoritative nameserver
+When a recursive resolver receives a response from a TLD nameserver, that response will direct the resolver to an authoritative nameserver. The authoritative nameserver is usually the resolver’s last step in the journey for an IP address. The authoritative nameserver contains information specific to the domain name it serves (e.g. google.com) and it can provide a recursive resolver with the IP address of that server found in the DNS A record, or if the domain has a CNAME record (alias) it will provide the recursive resolver with an alias domain, at which point the recursive resolver will have to perform a whole new DNS lookup to procure a record from an authoritative nameserver (often an A record containing an IP address). Cloudflare DNS distributes authoritative nameservers, which come with Anycast routing to make them more reliable.
+
+## 3 types of DNS queries:
+In a typical DNS lookup three types of queries occur. By using a combination of these queries, an optimized process for DNS resolution can result in a reduction of distance traveled. In an ideal situation cached record data will be available, allowing a DNS name server to return a non-recursive query.
+
+## 1. Recursive query - 
+In a recursive query, a DNS client requires that a DNS server (typically a DNS recursive resolver) will respond to the client with either the requested resource record or an error message if the resolver can't find the record.
+
+## 2. Iterative query - 
+in this situation the DNS client will allow a DNS server to return the best answer it can. If the queried DNS server does not have a match for the query name, it will return a referral to a DNS server authoritative for a lower level of the domain namespace. The DNS client will then make a query to the referral address. This process continues with additional DNS servers down the query chain until either an error or timeout occurs.
+
+## 3. Non-recursive query - 
+typically this will occur when a DNS resolver client queries a DNS server for a record that it has access to either because it's authoritative for the record or the record exists inside of its cache. Typically, a DNS server will cache DNS records to prevent additional bandwidth consumption and load on upstream servers.
+
+## DNS caching
+The purpose of caching is to temporarily stored data in a location that results in improvements in performance and reliability for data requests. DNS caching involves storing data closer to the requesting client so that the DNS query can be resolved earlier and additional queries further down the DNS lookup chain can be avoided, thereby improving load times and reducing bandwidth/CPU consumption. **DNS data can be cached in a variety of locations, each of which will store DNS records for a set amount of time determined by a time-to-live (TTL).**
+
+### 1. Browser DNS caching
+Modern web browsers are designed by default to cache DNS records for a set amount of time. The purpose here is obvious; the closer the DNS caching occurs to the web browser, the fewer processing steps must be taken in order to check the cache and make the correct requests to an IP address. 
+When a request is made for a DNS record, the browser cache is the first location checked for the requested record.
+
+In Chrome, you can see the status of your DNS cache by going to chrome://net-internals/#dns.
+
+### 2. Operating system (OS) level DNS caching
+The operating system level DNS resolver is the second and last local stop before a DNS query leaves your machine. The process inside your operating system that is designed to handle this query is commonly called a “stub resolver” or DNS client. When a stub resolver gets a request from an application, it first checks its own cache to see if it has the record. If it does not, it then sends a DNS query (with a recursive flag set), outside the local network to a DNS recursive resolver inside the Internet service provider (ISP).
+
+When the recursive resolver inside the ISP receives a DNS query, like all previous steps, it will also check to see if the requested host-to-IP-address translation is already stored inside its local persistence layer.
+
+The recursive resolver also has additional functionality depending on the types of records it has in its cache:
+
+1. If the resolver does not have the A records, but does have the NS records for the authoritative nameservers, it will query those name servers directly, bypassing several steps in the DNS query. This shortcut prevents lookups from the root and .com nameservers (in our search for example.com) and helps the resolution of the DNS query occur more quickly.
+2. If the resolver does not have the NS records, it will send a query to the TLD servers (.com in our case), skipping the root server.
+3. In the unlikely event that the resolver does not have records pointing to the TLD servers, it will then query the root servers. This event typically occurs after a DNS cache has been purged.
+
+
+
+## Record Types
+DNS records (aka zone files) are instructions that live in authoritative DNS servers and provide information about a domain including what IP address is associated with that domain and how to handle requests for that domain.
+
+These records consist of a series of text files written in what is known as DNS syntax. DNS syntax is just a string of characters used as commands that tell the DNS server what to do. All DNS records also have a "TTL", which stands for time-to-live, and indicates how often a DNS server will refresh that record.
+
+There are more record types but for now, let's look at some of the most commonly used ones:
+
+**A (Address record):** This is the record that holds the IP address of a domain.
+**AAAA (IP Version 6 Address record):** The record that contains the IPv6 address for a domain (as opposed to A records, which stores the IPv4 address).
+**CNAME (Canonical Name record):** Forwards one domain or subdomain to another domain, does NOT provide an IP address.
+**MX (Mail exchanger record):** Directs mail to an email server.
+**TXT (Text Record):** This record lets an admin store text notes in the record. These records are often used for email security.
+**NS (Name Server records):** Stores the name server for a DNS entry.
+**SOA (Start of Authority):** Stores admin information about a domain.
+**SRV (Service Location record):** Specifies a port for specific services.
+**PTR (Reverse-lookup Pointer record):** Provides a domain name in reverse lookups.
+**CERT (Certificate record):** Stores public key certificates.
+
+## Subdomains
+A subdomain is an additional part of our main domain name. It is commonly used to logically separate a website into sections. We can create multiple subdomains or child domains on the main domain.
+
+For example, `blog.example.com` where blog is the subdomain, example is the primary domain and .com is the top-level domain (TLD). Similar examples can be `support.example.com` or `careers.example.com`.
+
+## DNS Zones
+A DNS zone is a distinct part of the domain namespace which is delegated to a legal entity like a person, organization, or company, who is responsible for maintaining the DNS zone. A DNS zone is also an administrative function, allowing for granular control of DNS components, such as authoritative name servers.
+
+## Reverse DNS
+A reverse DNS lookup takes an IP address and returns the domain name associated with that IP. A forward DNS lookup does just the opposite.
+A reverse DNS lookup is a DNS query for the domain name associated with a given IP address.
+
+Reverse DNS lookups query DNS servers for a PTR (pointer) record; if the server does not have a PTR record, it cannot resolve a reverse lookup. PTR records store IP addresses with their segments reversed, and they append ".in-addr.arpa" to that. For example if a domain has an IP address of 192.0.2.1, the PTR record will store the domain's information under 1.2.0.192.in-addr.arpa.
+
+In IPv6, the latest version of the Internet Protocol, PTR records are stored within the ".ip6.arpa" domain instead of ".in-addr.arpa."
+
+Reverse lookups are commonly used by email servers. Email servers check and see if an email message came from a valid server before bringing it onto their network. Many email servers will reject messages from any server that does not support reverse lookups or from a server that is highly unlikely to be legitimate. Spammers often use IP addresses from hijacked machines, which means there will be no PTR record. Or, they may use dynamically assigned IP addresses that lead to server domains with highly generic names.
+
+## Examples
+These are some widely used managed DNS solutions:
+
+- Route53
+- Cloudflare DNS
+- Google Cloud DNS
+- Azure DNS
+- NS1
