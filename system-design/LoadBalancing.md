@@ -79,7 +79,7 @@ Now, let's discuss commonly used routing algorithms:
 ## 3. Security
 Load balancers can include security features such as SSL encryption, web application firewalls (WAF) and multi-factor authentication (MFA). They can also be incorporated into application delivery controllers (ADC) to improve application security. By safely routing or offloading network traffic, load balancing can help defend against security risks such as distributed denial-of-service (DDoS) attacks
 
-## How does load balancing work?
+# How does load balancing work?
 Load balancing is handled by a tool or application called a load balancer. A load balancer can be either hardware-based or software-based.
 
 When a request arrives from a user, the load balancer assigns the request to a given server, and this process repeats for each request. Load balancers determine which server should handle each request based on a number of different algorithms. These algorithms fall into two main categories: static and dynamic.
@@ -100,14 +100,50 @@ Suppose the grocery store employee who sorts the customers into checkout lines u
 
 There are several types of dynamic load balancing algorithms, including least connection, weighted least connection, resource-based, and geolocation-based load balancing.
 
+# Features
+Here are some commonly desired features of load balancers:
+- **Autoscaling:** Starting up and shutting down resources in response to demand conditions.
 
-## Q. What is server monitoring?
+- **Sticky sessions:** aka session affinity or session persistence. feature that binds a user's entire session to a specific backend server instance. This ensures all subsequent requests from that user during the session are consistently routed to the same server that handled the initial request.The ability to assign the same user or device to the same resource in order to maintain the session state on the resource.
+Sticky sessions are primarily necessary for stateful applications that store user-specific data (session state) locally on the server's memory or local file system.
+With sticky sessions enabled, it uses specific mechanisms to maintain persistence: 1.Cookie Based 2.IP Based
+Modern application architecture generally favors stateless applications to achieve better scalability and resilience. In this approach, session data is stored in a centralized, highly available external session store (such as Redis or a database) that all servers can access, eliminating the need for sticky sessions altogether.
+- **Healthchecks:** The ability to determine if a resource is down or performing poorly in order to remove the resource from the load balancing pool.
+- **Encryption:** It secures data in transit by handling SSL/TLS decryption and re-encryption, offloading this CPU-intensive work from backend servers, and ensuring data remains private between clients and the load balancer, and sometimes between the load balancer and servers, using protocols like TLS and ciphers to protect sensitive information and meet compliance.[SSL Support options](https://aws.amazon.com/blogs/aws/elastic-load-balancer-ssl-support-options/)
+- **Certificates:** Presenting certificates to a client and authentication of client certificates.
+- **Compression:** Compression of responses.an optimization technique used to reduce the size of data transmitted between the server and the client
+- **Caching:** An application-layer load balancer may offer the ability to cache responses.temporarily stores frequently accessed content (like images, CSS, static files) to serve them directly, avoiding repeated requests to backend servers, which boosts website performance, reduces server load, and lowers latency for users.
+- **Logging:** Logging of request and response metadata can serve as an important audit trail or source for analytics data.
+- **Request tracing:** Assigning a unique identifier (like `X-Amzn-Trace-Id`) to incoming HTTP requests, allowing you to track a single request's journey across multiple services in a distributed system for better debugging, performance analysis, and troubleshooting
+- **Redirects:** allows it to intercept an incoming client request and automatically send an HTTP response back to the client, instructing its browser or application to go to a different URL or use a different protocol.Avaiable in Appication LBs. The ability to redirect an incoming request based on factors such as the requested path.
+- **Fixed response:** Returning a static response for a request such as an error message.
+
+# Examples of LBs:
+1. ## Cloud Based
+- [Amazon Elastic Load Balancing](https://aws.amazon.com/elasticloadbalancing/)
+- [Azure Load Balancing](https://azure.microsoft.com/en-in/services/load-balancer)
+- [GCP Load Balancing](https://azure.microsoft.com/en-in/services/load-balancer)
+- [DigitalOcean Load Balancer](https://www.digitalocean.com/products/load-balancer)
+2. ## Open Source
+- [Nginx](https://www.nginx.com/)
+- [HAProxy](http://www.haproxy.org/)
+
+# Redundant load balancers
+- a critical design pattern in high-availability systems where multiple load balancers are used together to eliminate a single point of failure
+
+- As you must've already guessed, the load balancer itself can be a single point of failure. To overcome this, a second or N number of load balancers can be used in a cluster mode.
+
+- And, if there's a failure detection and the active load balancer fails, another passive load balancer can take over which will make our system more fault-tolerant.
+
+![Redundant load balancers](../diagrams/redundant-load-balancer.png)
+
+# Q. What is server monitoring?
 - Dynamic load balancers must be aware of server health: their current status, how well they are performing, etc. 
 - Dynamic load balancers monitor servers by performing regular server health checks. 
 - If a server or group of servers is performing slowly, the load balancer distributes less traffic to it. 
 - If a server or group of servers fails completely, the load balancer reroutes traffic to another group of servers, a process known as "failover."
 
-## Q. What is failover?
+# Q. What is failover?
 - Failover occurs when a given server is not functioning and a load balancer distributes its normal processes to a secondary server or group of servers. 
 - Server failover is crucial for reliability: if there is no backup in place, a server crash could bring down a website or application. 
 - It is important that failover takes place quickly to avoid a gap in service.

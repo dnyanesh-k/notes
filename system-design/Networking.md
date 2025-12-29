@@ -1,6 +1,6 @@
 # What is IP and ip address ?
+- IP stands for "Internet Protocol", which is the set of rules governing the format of data sent via the internet or local network.
 - a unique numerical label (address) for every device on a network (internet or a local network)
--  IP stands for "Internet Protocol", which is the set of rules governing the format of data sent via the internet or local network.
 - they contain location information and make devices accessible for communication
 - IP addresses are the identifier that allows information to be sent between devices on a network
 -  IP addresses provide a way for internet to differentiate between different computers, routers, and websites
