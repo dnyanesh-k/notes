@@ -44,3 +44,12 @@ Object storage, which is also known as object-based storage, breaks data files u
 
 # NAS
 A NAS (Network Attached Storage) is a storage device connected to a network that allows storage and retrieval of data from a central location for authorized network users. NAS devices are flexible, meaning that as we need additional storage, we can add to what we have. It's faster, less expensive, and provides all the benefits of a public cloud on-site, giving us complete control.
+
+# HDFS
+The Hadoop Distributed File System (HDFS) is a distributed file system designed to run on commodity hardware. 
+HDFS is highly fault-tolerant and is designed to be deployed on low-cost hardware. 
+HDFS provides high throughput access to application data and is suitable for applications that have large data sets. 
+It has many similarities with existing distributed file systems.
+HDFS is designed to reliably store very large files across machines in a large cluster. 
+It **stores each file as a sequence of blocks, all blocks in a file except the last block are the same size.** 
+The blocks of a file are replicated for fault tolerance.
