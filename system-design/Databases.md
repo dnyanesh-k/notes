@@ -565,3 +565,689 @@ Bitmap operations like AND, OR, and NOT are performed efficiently using bitwise 
    - Indexes take up extra disk space since they're additional data structures that need to be stored alongside your tables.
 
    - Every time you insert, update, or delete data in a table with an index, the index needs to update too. This can slightly slow down write operations.
+
+
+# Normalization and Denormalization
+## Terms
+Before we go any further, let's look at some commonly used terms in normalization and denormalization.
+
+### Keys
+- **Primary key:** Column or group of columns that can be used to uniquely identify every row of the table.
+
+- **Composite key:** A primary key made up of multiple columns.
+
+- **Super key:** Set of all keys that can uniquely identify all the rows present in a table.
+
+- **Candidate key:** Attributes that identify rows uniquely in a table.
+
+- **Foreign key:** It is a reference to a primary key of another table.
+
+- **Alternate key:** Keys that are not primary keys are known as alternate keys.
+
+- **Surrogate key:** A system-generated value that uniquely identifies each entry in a table when no other column was able to hold properties of a primary key.
+
+### Dependencies
+- **Partial dependency:** Occurs when the primary key determines some other attributes.
+
+- **Functional dependency:** It is a relationship that exists between two attributes, typically between the primary key and non-key attribute within a table.
+
+- **Transitive functional dependency:** Occurs when some non-key attribute determines some other attribute.
+
+### Anomalies
+Database anomaly happens when there is a flaw in the database due to incorrect planning or storing everything in a flat database. This is generally addressed by the process of normalization.
+
+There are three types of database anomalies:
+
+- **Insertion anomaly:** Occurs when we are not able to insert certain attributes in the database without the presence of other attributes.
+
+- **Update anomaly:** Occurs in case of data redundancy and partial update. In other words, a correct update of the database needs other actions such as addition, deletion, or both.
+
+- **Deletion anomaly:** Occurs where deletion of some data requires deletion of other data.
+
+Example
+
+Let's consider the following table which is not normalized:
+
+|ID|Name	|Role|Team
+|--|--------|------------------|----
+|1 |Peter	|Software Engineer |A
+|2	|Brian	|DevOps Engineer	 |B
+|3	|Hailey	|Product Manager	 |C
+|4	|Hailey	|Product Manager	 |C
+|5	|Steve	|Frontend Engineer |D
+
+Let's imagine, we hired a new person "John" but they might not be assigned a team immediately. This will cause an insertion anomaly as the team attribute is not yet present.
+
+Next, let's say Hailey from Team C got promoted, to reflect that change in the database, we will need to update 2 rows to maintain consistency which can cause an update anomaly.
+
+Finally, we would like to remove Team B but to do that we will also need to remove additional information such as name and role, this is an example of a deletion anomaly.
+
+## Normalization
+Normalization is the process of organizing data in a database. This includes creating tables and establishing relationships between those tables according to rules designed both to protect the data and to make the database more flexible by eliminating redundancy and inconsistent dependency.
+
+### Why do we need normalization?
+The goal of normalization is to eliminate redundant data and ensure data is consistent. 
+A fully normalized database allows its structure to be extended to accommodate new types of data without changing the existing structure too much. 
+As a result, applications interacting with the database are minimally affected.
+
+### Normal forms
+Normal forms are a series of guidelines to ensure that the database is normalized. Let's discuss some essential normal forms:
+
+1. #### 1NF
+
+For a table to be in the first normal form (1NF), it should follow the following rules:
+
+- Repeating groups are not permitted.
+- Identify each set of related data with a primary key.
+- Set of related data should have a separate table.
+- Mixing data types in the same column is not permitted.
+
+2. #### 2NF
+
+For a table to be in the second normal form (2NF), it should follow the following rules:
+
+- Satisfies the first normal form (1NF).
+- Should not have any partial dependency.
+
+3. #### 3NF
+
+For a table to be in the third normal form (3NF), it should follow the following rules:
+
+- Satisfies the second normal form (2NF).
+- Transitive functional dependencies are not permitted.
+
+4. #### BCNF
+
+Boyce-Codd normal form (or BCNF) is a slightly stronger version of the third normal form (3NF) used to address certain types of anomalies not dealt with by 3NF as originally defined. 
+Sometimes it is also known as the 3.5 normal form (3.5NF).
+
+For a table to be in the Boyce-Codd normal form (BCNF), it should follow the following rules:
+
+- Satisfied the third normal form (3NF).
+- For every functional dependency X → Y, X should be the super key.
+- There are more normal forms such as 4NF, 5NF, and 6NF but we won't discuss them here. 
+
+Check out this amazing [video](https://www.youtube.com/watch?v=GFQaEYEc8_8) that goes into detail.
+
+In a relational database, a relation is often described as "normalized" if it meets the third normal form. Most 3NF relations are free of insertion, update, and deletion anomalies.
+
+As with many formal rules and specifications, real-world scenarios do not always allow for perfect compliance. 
+If you decide to violate one of the first three rules of normalization, make sure that your application anticipates any problems that could occur, such as redundant data and inconsistent dependencies.
+
+### Advantages
+Here are some advantages of normalization:
+
+- Reduces data redundancy.
+- Better data design.
+- Increases data consistency.
+- Enforces referential integrity.
+
+#### Disadvantages
+Let's look at some disadvantages of normalization:
+
+- Data design is complex.
+- Slower performance.
+- Maintenance overhead.
+- Require more joins.
+
+## Denormalization
+Denormalization is a database optimization technique in which we add redundant data to one or more tables. This can help us avoid costly joins in a relational database. It attempts to improve read performance at the expense of some write performance. Redundant copies of the data are written in multiple tables to avoid expensive joins.
+
+Once data becomes distributed with techniques such as federation and sharding, managing joins across the network further increases complexity. Denormalization might circumvent the need for such complex joins.
+
+Note: Denormalization does not mean reversing normalization.
+
+### Advantages
+Let's look at some advantages of denormalization:
+
+- Retrieving data is faster.
+- Writing queries is easier.
+- Convenient to manage.
+
+### Disadvantages
+Below are some disadvantages of denormalization:
+
+- Expensive inserts and updates.
+- Increases complexity of database design.
+- Increases data redundancy.
+- More chances of data inconsistency.
+
+## ACID and BASE consistency models
+Let's discuss the ACID and BASE consistency models.
+
+### ACID
+- The term ACID stands for **Atomicity**, **Consistency**, **Isolation**, and **Durability**. 
+- ACID properties are used for maintaining data integrity during transaction processing.
+
+In order to maintain consistency before and after a transaction relational databases follow ACID properties. Let us understand these terms:
+
+- **Atomic**
+All operations in a transaction succeed or every operation is rolled back.
+Under the hood, atomicity is typically enforced using write-ahead logging(WAL) or undo/redo logs.
+Before applying any changes to the main storage, the database logs the intended operations.
+if the system crashes mid-transaction, it consults the log on restart: either roll everything back(undo log) or reapply changes that were pending commit(redo log)
+this makes atomicity a foundational protection against system crashes, disk writes failures, or application bugs that abort mid-flight.
+
+- **Consistent**
+On the completion of a transaction, the database is structurally sound.
+Consistency ensures that a tx moves the db from one valid state to another.
+A valid state is defined by constraints such as primary keys, data types, uniqueness, and any custom rules enforced by business logic
+Contrary to common belief, consistency isn't fully enforced by db. The ssytem can guarantee internal constraints(e.g. no duplicate keys) but app-level consistency(e.g. a driver can't be assigned to two rides at once) must be supported by the developer using the logic or tx scoping.
+Still, ACID contract guarantees that no tx will leave the system in an invalid state from the db's perspective.
+If a constraint is violated, the tx fails and rolls back.
+This results in predictable behavior even when many processes interact with the data at once.
+
+- **Isolated**
+Transactions do not contend with one another. Contentious access to data is moderated by the database so that transactions appear to run sequentially.
+Isolation ensures that concurrently executing txs do not see each other's intermediate states.
+Each tx must behave as if were running alone, even though the databse may be interleaving its operations for performance.
+
+Full isolation (known as serializability) means txs execute as if they were run in strict sequence.
+It's safe but expensive.
+Most production systems run with weaker isolation levels to trade some safety for throughput.
+There are generally 4 levels:
+- **Read Uncommited:** It allows dirty reads where one tx may see changes from other that rolls back later.
+- **Read Commited:** Only sees commited changes from other txs.
+Prevents dirty reads but allows non-repeatable reads.
+- **Repeatable Read:** Guarantees that repeated reads within a tx see the same data. Still allows phantom rows to appear on re-query.
+- **Serializable:** Enforces full isolation by making txs behave as if they ran one after another.Rarely outside of high-integrity systems.
+
+These isolation levels aim to protect against common anomalies:
+- **Dirty read:** reading uncommited data from another tx
+- **Non-repeatable read:** reading the same row twice and getting different results
+- **Phantom read:** A new row apears in a subsequent read due to another tx's insert
+
+Each stronger level prevents more anomalies but increases contention and the risk of deadlocks.
+Choosing the right isolation level is a performance versus correctness decision.
+e.g financial systems may lean toward serializable, while analytics dashboards might settle for read commited
+
+- **Durable**
+Once the transaction has been completed and the writes and updates have been written to the disk, it will remain in the system even if a system failure occurs.
+Durability ensures that once a tx commits, its changes are permanent, even if the db crashes miliseconds later.
+This guarantee exists becoz in distributed or stateful systems, crashes are inevitable.
+The durability property ensures that successful operations don't vanish due to hardware failures,software crashes or power loss.
+Databases implement durability by persisting transaction logs (typically WAL - Write-Ahead Log files) to disk before acknowledging the commit to the client. This way, even if the database crashes immediately after, the committed changes can be recovered by replaying the log during startup. Additionally, databases may use checkpointing, where periodic snapshots of the in-memory state are flushed to disk, reducing recovery time by limiting how much of the log needs to be replayed.
+
+### BASE (Basically Available, Soft state, Eventual consistency)
+With the increasing amount of data and high availability requirements, the approach to database design has also changed dramatically. 
+To increase the ability to scale and at the same time be highly available, we move the logic from the database to separate servers. 
+In this way, the database becomes more independent and focused on the actual process of storing data.
+
+In the NoSQL database world, ACID transactions are less common as some databases have loosened the requirements for immediate consistency, data freshness, and accuracy in order to gain other benefits, like scale and resilience.
+
+BASE properties are much looser than ACID guarantees, but there isn't a direct one-for-one mapping between the two consistency models. Let us understand these terms:
+
+- **Basic Availability**
+The database appears to work most of the time.
+
+- **Soft-state**
+Stores don't have to be write-consistent, nor do different replicas have to be mutually consistent all the time.
+
+- **Eventual consistency**
+The data might not be consistent immediately but eventually, it becomes consistent.
+Reads in the system are still possible even though they may not give the correct response due to inconsistency.
+
+### ACID vs BASE Trade-offs
+There's no right answer to whether our application needs an ACID or a BASE consistency model. 
+Both the models have been designed to satisfy different requirements. 
+**While choosing a database we need to keep the properties of both the models and the requirements of our application in mind.**
+
+Given BASE's loose consistency, developers need to be more knowledgeable and rigorous about consistent data if they choose a BASE store for their application. It's essential to be familiar with the BASE behavior of the chosen database and work within those constraints.
+
+On the other hand, planning around BASE limitations can sometimes be a major disadvantage when compared to the simplicity of ACID transactions. A fully ACID database is the perfect fit for use cases where data reliability and consistency are essential.
+
+# CAP Theorem
+CAP theorem states that a distributed system can deliver only two of the three desired characteristics Consistency, Availability, and Partition tolerance (CAP).
+
+![cap-theorem](../diagrams/cap-theorem.png)
+
+Let's take a detailed look at the three distributed system characteristics to which the CAP theorem refers.
+
+## Consistency
+Consistency means that all clients see the same data at the same time, no matter which node they connect to. For this to happen, whenever data is written to one node, it must be instantly forwarded or replicated across all the nodes in the system before the write is deemed "successful".
+
+## Availability
+Availability means that any client making a request for data gets a response, even if one or more nodes are down.
+
+## Partition tolerance
+Partition tolerance means the system continues to work despite message loss or partial failure. 
+A system that is partition-tolerant can sustain any amount of network failure that doesn't result in a failure of the entire network. 
+Data is sufficiently replicated across combinations of nodes and networks to keep the system up through intermittent outages.
+
+## Consistency-Availability Tradeoff
+We live in a physical world and can't guarantee the stability of a network, so distributed databases must choose Partition Tolerance (P). This implies a tradeoff between Consistency (C) and Availability (A).
+
+### CA database
+A CA database delivers consistency and availability across all nodes. It can't do this if there is a partition between any two nodes in the system, and therefore can't deliver fault tolerance.
+
+Example: PostgreSQL, MariaDB.
+
+### CP database
+A CP database delivers consistency and partition tolerance at the expense of availability. 
+When a partition occurs between any two nodes, the system has to shut down the non-consistent node until the partition is resolved.
+
+Example: MongoDB, Apache HBase.
+
+### AP database
+An AP database delivers availability and partition tolerance at the expense of consistency. 
+When a partition occurs, all nodes remain available but those at the wrong end of a partition might return an older version of data than others. 
+When the partition is resolved, the AP databases typically re-syncs the nodes to repair all inconsistencies in the system.
+
+Example: Apache Cassandra, CouchDB.
+
+# PACELC Theorem
+The PACELC theorem is an extension of the CAP theorem. The CAP theorem states that in the case of network partitioning (P) in a distributed system, one has to choose between Availability (A) and Consistency (C).
+
+PACELC extends the CAP theorem by introducing latency (L) as an additional attribute of a distributed system. The theorem states that else (E), even when the system is running normally in the absence of partitions, one has to choose between latency (L) and consistency (C).
+
+The PACELC theorem was first described by Daniel J. Abadi.
+
+![palec-theorem](../diagrams/pacelc-theorem.png)
+
+
+PACELC theorem was developed to address a key limitation of the CAP theorem as it makes no provision for performance or latency.
+
+For example, according to the CAP theorem, a database can be considered available if a query returns a response after 30 days. Obviously, such latency would be unacceptable for any real-world application.
+
+# Transactions
+A transaction is a series of database operations that are considered to be a "single unit of work". 
+The operations in a transaction either all succeed, or they all fail. 
+In this way, the notion of a transaction supports data integrity when part of a system fails. 
+Not all databases choose to support ACID transactions, usually because they are prioritizing other optimizations that are hard or theoretically impossible to implement together.
+
+Usually, relational databases support ACID transactions, and non-relational databases don't (there are exceptions).
+
+## States
+A transaction in a database can be in one of the following states:
+
+![trasaction states](../diagrams/transaction-states.png)
+
+### Active
+In this state, the transaction is being executed. This is the initial state of every transaction.
+
+### Partially Committed
+When a transaction executes its final operation, it is said to be in a partially committed state.
+
+### Committed
+If a transaction executes all its operations successfully, it is said to be committed. All its effects are now permanently established on the database system.
+
+### Failed
+The transaction is said to be in a failed state if any of the checks made by the database recovery system fails. A failed transaction can no longer proceed further.
+
+### Aborted
+If any of the checks fail and the transaction has reached a failed state, then the recovery manager rolls back all its write operations on the database to bring the database back to its original state where it was prior to the execution of the transaction. Transactions in this state are aborted.
+
+The database recovery module can select one of the two operations after a transaction aborts:
+
+- Restart the transaction
+- Kill the transaction
+
+### Terminated
+If there isn't any roll-back or the transaction comes from the committed state, then the system is consistent and ready for a new transaction and the old transaction is terminated.
+
+# Distributed Transactions
+
+A distributed transaction spans multiple independent databases or services, ensuring that a group of operations either **all succeed** or **all fail** atomically—even when data lives on different nodes or networks.
+
+## Why do we need distributed transactions?
+
+In monolithic systems, a single database handles ACID guarantees. But in distributed architectures (microservices, sharded databases), a single logical operation often touches multiple data stores.
+
+**Example**: An e-commerce order involves:
+1. Deducting inventory (Inventory Service/DB)
+2. Charging the customer (Payment Service/DB)  
+3. Creating the order record (Order Service/DB)
+
+If payment succeeds but inventory update fails, you have an **inconsistent state**. Distributed transactions solve the **atomic commitment problem**—ensuring all participants agree on commit or abort.
+
+**Key challenges:**
+- Network partitions can isolate nodes mid-transaction
+- Nodes can crash at any point
+- No global clock—nodes can't easily agree on "when" something happened
+- Partial failures: some nodes succeed, others fail
+
+## Two-Phase Commit (2PC)
+
+The most widely used protocol for distributed atomic commits. It uses a **coordinator** (transaction manager) to orchestrate consensus among **participants** (resource managers).
+
+### How it works
+
+![2pc](../diagrams/two-phase-commit.png)
+
+**Phase 1: Prepare (Voting)**
+1. Coordinator sends `PREPARE` request to all participants
+2. Each participant executes the transaction locally (but doesn't commit), writes changes to durable storage (WAL), and acquires locks
+3. Participants respond with:
+   - `VOTE_COMMIT` — "I can commit, my locks are held"
+   - `VOTE_ABORT` — "I cannot commit" (constraint violation, timeout, etc.)
+
+**Phase 2: Commit/Abort (Decision)**
+- If **all participants voted COMMIT** → Coordinator sends `GLOBAL_COMMIT` to all
+- If **any participant voted ABORT** (or timed out) → Coordinator sends `GLOBAL_ABORT` to all
+- Participants execute the decision, release locks, and acknowledge
+
+### Problems with 2PC
+
+| Problem | Description |
+|---------|-------------|
+| **Blocking** | If coordinator crashes after Phase 1, participants holding locks are stuck waiting indefinitely. They can't unilaterally decide to commit or abort. |
+| **Single point of failure** | Coordinator crash blocks the entire transaction until recovery. |
+| **Synchronous & slow** | Requires multiple round-trips and disk flushes; high latency under load. |
+| **Doesn't handle network partitions well** | A partitioned participant may not receive the final decision. |
+
+### 2PC in Practice
+- Used in traditional RDBMSs with XA protocol (Java JTA, .NET DTC)
+- Not suitable for high-throughput, geo-distributed systems
+- Most modern distributed systems avoid 2PC in favor of eventual consistency patterns
+
+## Three-Phase Commit (3PC)
+
+Three-Phase Commit is an enhancement to 2PC designed to **reduce the blocking problem**. It introduces an additional phase between voting and committing, allowing participants to make progress even if the coordinator fails.
+
+**Core insight:** In 2PC, if the coordinator crashes after sending `PREPARE` but before sending the final decision, participants are stuck—they don't know if others voted to commit or abort. 3PC solves this by adding a `PRE_COMMIT` phase that tells participants "everyone agreed to commit" before the actual commit.
+
+### How it works
+
+![3pc](../diagrams/3pc.png)
+
+**Phase 1: CanCommit (Voting)**
+1. Coordinator sends `CAN_COMMIT?` to all participants
+2. Each participant checks if it can commit (validates constraints, checks resources)
+3. Participants respond with:
+   - `YES` — "I can commit this transaction"
+   - `NO` — "I cannot commit" (abort immediately)
+
+**Phase 2: PreCommit (Preparation)**
+- If **all participants said YES** → Coordinator sends `PRE_COMMIT` to all
+- If **any participant said NO** → Coordinator sends `ABORT` to all
+- Upon receiving `PRE_COMMIT`, participants:
+  - Execute the transaction locally (but don't commit yet)
+  - Write changes to WAL (durable storage)
+  - Acquire and hold locks
+  - Respond with `ACK`
+
+**Phase 3: DoCommit (Execution)**
+- Coordinator sends `DO_COMMIT` to all participants
+- Participants commit the transaction, release locks
+- Participants respond with `DONE`
+
+### Why 3PC reduces blocking
+
+The key difference is **what participants can do on timeout**:
+
+| Crash Point | 2PC Behavior | 3PC Behavior |
+|-------------|--------------|--------------|
+| Before PREPARE/CAN_COMMIT | Timeout → Abort | Timeout → Abort |
+| After PREPARE, before decision | **BLOCKED** (can't decide) | Timeout → Abort (no PRE_COMMIT = not everyone agreed) |
+| After PRE_COMMIT received | N/A | Timeout → **COMMIT** (everyone agreed, safe to proceed) |
+
+**The PRE_COMMIT acts as a "promise"**: Once a participant receives `PRE_COMMIT`, it knows that all other participants voted YES. If the coordinator crashes, participants can safely commit after a timeout because they know no one will abort.
+
+### 3PC State Transitions
+
+```
+Participant States:
+                                           
+  INITIAL ──CAN_COMMIT?──▶ WAITING ──YES──▶ PREPARED
+     │                        │                │
+     │                        │ NO             │ PRE_COMMIT
+     │                        ▼                ▼
+     │                     ABORTED         PRE_COMMITTED
+     │                                         │
+     │                                         │ DO_COMMIT
+     │                                         ▼
+     └────────────────────────────────────▶ COMMITTED
+```
+
+### Problems with 3PC
+
+| Problem | Description |
+|---------|-------------|
+| **Network partitions** | If the network splits, two groups might make conflicting decisions. Group A (with coordinator) might abort while Group B (timed out, had PRE_COMMIT) commits. This leads to **split-brain**. |
+| **More messages** | Requires 6n messages vs 4n for 2PC (n = number of participants). Higher latency. |
+| **Not partition-tolerant** | The timeout-based recovery assumes crashed coordinator, not network partition. In async networks, you can't distinguish between the two. |
+| **Rarely used** | The added complexity isn't worth it since network partitions are the bigger problem in practice. |
+
+### 3PC Timeout Rules
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    PARTICIPANT TIMEOUT RULES                   │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  State: WAITING (sent YES, waiting for PRE_COMMIT)             │
+│  Action on timeout: ABORT                                      │
+│  Reason: Don't know if everyone agreed                         │
+│                                                                │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  State: PRE_COMMITTED (received PRE_COMMIT, waiting for        │
+│         DO_COMMIT)                                             │
+│  Action on timeout: COMMIT                                     │
+│  Reason: Everyone agreed (that's why we got PRE_COMMIT)        │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### 2PC vs 3PC Comparison
+
+| Aspect | 2PC | 3PC |
+|--------|-----|-----|
+| **Phases** | 2 (Prepare, Commit) | 3 (CanCommit, PreCommit, DoCommit) |
+| **Blocking on coordinator crash** | YES - indefinite | NO - can timeout and decide |
+| **Network partition safe** | No | No (can cause split-brain) |
+| **Messages** | 4n | 6n |
+| **Latency** | Lower | Higher (extra round-trip) |
+| **Practical usage** | Common (XA, JTA) | Rare (theoretical) |
+
+### 3PC in Practice
+
+- **Rarely used** in production systems due to network partition vulnerability
+- The FLP impossibility result proves that no deterministic protocol can guarantee consensus in async networks with failures
+- Modern systems prefer:
+  - **Paxos/Raft-based commits** (Spanner, CockroachDB) - handles partitions correctly
+  - **Saga pattern** - eventual consistency without distributed locks
+  - **2PC with coordinator replication** - practical compromise
+
+### Interview Tips for 3PC
+
+**Common questions:**
+- *"How does 3PC improve on 2PC?"* → Reduces blocking by letting participants timeout and decide after PreCommit
+- *"Why isn't 3PC used in practice?"* → Network partitions can cause split-brain; can't distinguish crash from partition
+- *"What's the key insight of 3PC?"* → PreCommit phase guarantees all participants agreed, enabling safe timeout-based recovery
+
+**Key points:**
+- 3PC trades **message complexity** for **reduced blocking**
+- Still not partition-tolerant (the real problem in distributed systems)
+- FLP impossibility: can't have safety + liveness + fault tolerance in async systems
+- Modern solution: Paxos/Raft for coordinator election + 2PC for atomic commit
+
+
+## Saga Pattern
+
+A Saga is a sequence of **local transactions** where each transaction updates its own database and triggers the next step. Unlike 2PC/3PC, Sagas don't lock resources across services—instead, they rely on **compensating transactions** to undo changes if something fails.
+
+**Simple definition:** Break a distributed transaction into multiple small steps, and if any step fails, run "undo" operations for all completed steps.
+
+### Why do we need Sagas?
+
+2PC and 3PC have problems:
+- They **lock resources** across services (bad for performance)
+- They're **blocking** (one slow service holds everyone)
+- They don't scale well in microservices
+
+Sagas solve this by:
+- Each service commits **independently** (no distributed locks)
+- Failures are handled by **compensation** (undo actions)
+- Better **availability** and **scalability**
+
+### How Sagas Work
+#### Saga- Order Processing 
+
+![sage-order-processing](../diagrams/saga-order-processing.png)
+
+**If Step 3 (Payment) fails:**
+```
+Step 1: Create Order ✓
+Step 2: Reserve Inventory ✓
+Step 3: Process Payment ✗  ← FAILURE!
+
+Compensation kicks in (reverse order):
+  └── Compensate Step 2: Release Inventory
+  └── Compensate Step 1: Cancel Order
+
+Result: System back to consistent state
+```
+
+### Real-World Example: E-commerce Order
+
+![e-commerce-order-processing-saga](../diagrams/e-commerce-order-saga.png)
+
+### Compensating Transactions
+
+A compensating transaction **undoes** the effect of a previous transaction. It's NOT a rollback—it's a new transaction that reverses the business effect.
+
+| Original Transaction | Compensating Transaction |
+|---------------------|-------------------------|
+| Create Order | Cancel Order |
+| Reserve Inventory | Release Inventory |
+| Charge Payment | Refund Payment |
+| Send Email | Send Cancellation Email |
+| Ship Package | Recall Package / Arrange Return |
+
+**Important:** Some actions can't be easily compensated:
+- Email already sent (can only send follow-up)
+- Physical item shipped (expensive to reverse)
+- External API called (may have side effects)
+
+### Coordination Approaches
+
+There are two ways to coordinate a Saga:
+
+#### 1. Choreography (Event-Driven)
+
+Each service **listens for events** and decides what to do next. No central controller.
+
+![choreography](../diagrams/choreography.png)
+
+**How it works:**
+1. Order Service creates order, emits `OrderCreated` event
+2. Inventory Service hears event, reserves stock, emits `StockReserved`
+3. Payment Service hears event, charges card, emits `PaymentCompleted`
+4. If payment fails, emits `PaymentFailed` → other services listen and compensate
+
+**Pros:**
+- Simple to implement for small sagas
+- Loose coupling between services
+- No single point of failure
+
+**Cons:**
+- Hard to track overall saga state
+- Difficult to debug (events scattered across services)
+- Risk of cyclic dependencies
+- Hard to understand the full flow
+
+#### 2. Orchestration (Central Controller)
+
+A **central orchestrator** tells each service what to do and handles failures.
+
+![saga-orchestrator](../diagrams/saga-orchestrator.png)
+
+**How it works:**
+1. Orchestrator receives "Create Order" request
+2. Orchestrator calls Order Service → "Create Order"
+3. Orchestrator calls Inventory Service → "Reserve Stock"
+4. Orchestrator calls Payment Service → "Charge Card"
+5. If any step fails, Orchestrator runs compensations in reverse
+
+**Pros:**
+- Easy to understand the full saga flow
+- Centralized error handling and logging
+- Easier to debug and monitor
+- Clear ownership of saga logic
+
+**Cons:**
+- Orchestrator is a single point of failure (needs to be resilient)
+- More coupling to orchestrator
+- Can become complex if orchestrator handles too much
+
+### Choreography vs Orchestration
+
+| Aspect | Choreography | Orchestration |
+|--------|--------------|---------------|
+| **Coordination** | Decentralized (events) | Centralized (orchestrator) |
+| **Coupling** | Loose | Tighter to orchestrator |
+| **Visibility** | Hard to see full flow | Easy to see full flow |
+| **Debugging** | Difficult | Easier |
+| **Failure handling** | Distributed | Centralized |
+| **Best for** | Simple sagas (2-3 steps) | Complex sagas (4+ steps) |
+| **Single point of failure** | No | Yes (orchestrator) |
+
+### Problems with Sagas
+
+| Problem | Description | Mitigation |
+|---------|-------------|------------|
+| **No isolation** | Other transactions can see intermediate states (e.g., order created but payment pending) | Use status fields (`PENDING`, `CONFIRMED`), design for eventual consistency |
+| **Hard to debug** | Failures can happen across multiple services | Use correlation IDs, centralized logging, distributed tracing |
+| **Compensation complexity** | Some actions are hard to undo | Design compensatable operations upfront, use idempotent operations |
+| **Cyclic dependencies** | Services might depend on each other in circles | Careful saga design, use orchestration |
+| **Testing difficulty** | Need all services running | Use contract testing, mocks, integration test environments |
+
+### Saga Design Best Practices
+
+1. **Make operations idempotent**
+   - Running the same operation twice should have the same effect
+   - Helps with retries and recovery
+
+2. **Use correlation IDs**
+   - Assign a unique ID to each saga instance
+   - Track all related events/calls with this ID
+
+3. **Design compensations upfront**
+   - Think about "what if this fails?" for each step
+   - Some steps may need "semantic" compensation (send apology email)
+
+4. **Handle partial failures**
+   - What if compensation itself fails?
+   - Use retry mechanisms, dead letter queues
+
+5. **Keep sagas short**
+   - Fewer steps = less chance of failure
+   - Combine steps if possible
+
+### When to Use Sagas
+
+**Use Sagas when:**
+- You have microservices that need to maintain data consistency
+- Long-running transactions (minutes/hours)
+- You can tolerate eventual consistency
+- You can design compensating actions
+
+**Don't use Sagas when:**
+- You need strong consistency (use 2PC or single database)
+- Compensations are impossible or very expensive
+- Simple operations that can use a single database transaction
+
+### Interview Tips for SDE1
+
+**Common questions:**
+
+*"What is a Saga pattern?"*
+→ It's a way to manage distributed transactions by breaking them into local transactions with compensating actions for rollback.
+
+*"Saga vs 2PC?"*
+→ 2PC locks resources and is blocking; Saga doesn't lock, uses compensation, better for availability but only eventual consistency.
+
+*"Choreography vs Orchestration?"*
+→ Choreography = event-driven, decentralized, good for simple flows. Orchestration = central controller, easier to debug, good for complex flows.
+
+*"What happens if compensation fails?"*
+→ Retry with exponential backoff, use dead letter queues, alert for manual intervention.
+
+**Key points to remember:**
+- Saga = local transactions + compensating transactions
+- No distributed locks = better performance and availability
+- Trade-off: eventual consistency instead of strong consistency
+- Two approaches: Choreography (events) and Orchestration (central controller)
+- Always design compensations before implementing the saga
+
