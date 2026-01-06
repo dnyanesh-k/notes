@@ -2001,3 +2001,388 @@ Initial Setup: 3 Nodes, Hash Range 0-359 (like degrees)
 - Trade-off: complexity for minimal redistribution
 
 
+# Database Federation
+
+Database Federation (also called **Functional Partitioning**) splits databases by **function or domain** rather than by rows. Each database handles a specific business function independently.
+
+**Simple definition:** Instead of one giant database for everything, have separate databases for Users, Products, Orders, etc.
+
+## Why do we need Federation?
+
+As applications grow, a monolithic database becomes problematic:
+
+| Problem | Description |
+|---------|-------------|
+| **Write bottleneck** | Single master handles all writes |
+| **Read bottleneck** | Complex queries across all data |
+| **Schema conflicts** | Changes affect unrelated features |
+| **Scaling difficulty** | Can't scale parts independently |
+| **Single point of failure** | One DB down = entire app down |
+
+## How Federation Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         BEFORE: Monolithic Database                         │
+│                                                                             │
+│    ┌─────────────────────────────────────────────────────────────────────┐  │
+│    │                        Single Database                              │  │
+│    │  ┌─────────────┬─────────────┬─────────────┬─────────────────────┐ │  │
+│    │  │   Users     │  Products   │   Orders    │   Payments    ...   │ │  │
+│    │  │   Table     │   Table     │   Table     │   Table             │ │  │
+│    │  └─────────────┴─────────────┴─────────────┴─────────────────────┘ │  │
+│    │                                                                     │  │
+│    │          ALL queries, ALL writes go to ONE database                │  │
+│    └─────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         AFTER: Federated Databases                          │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │   Users DB   │  │ Products DB  │  │  Orders DB   │  │ Payments DB  │    │
+│  │              │  │              │  │              │  │              │    │
+│  │ • users      │  │ • products   │  │ • orders     │  │ • payments   │    │
+│  │ • profiles   │  │ • categories │  │ • order_items│  │ • refunds    │    │
+│  │ • settings   │  │ • inventory  │  │ • shipments  │  │ • invoices   │    │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
+│         │                 │                 │                 │            │
+│         └─────────────────┴────────┬────────┴─────────────────┘            │
+│                                    │                                        │
+│                           ┌────────┴────────┐                              │
+│                           │   Application   │                              │
+│                           │     Layer       │                              │
+│                           └─────────────────┘                              │
+│                                                                             │
+│         Each database handles its own domain independently!                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Federation Architecture
+
+```
+                    ┌─────────────────────────────────┐
+                    │           Client Request        │
+                    └─────────────┬───────────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────────────┐
+                    │        Application Server       │
+                    │   (Routes to correct database)  │
+                    └─────────────┬───────────────────┘
+                                  │
+            ┌─────────────────────┼─────────────────────┐
+            │                     │                     │
+            ▼                     ▼                     ▼
+    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+    │   Users DB    │    │  Products DB  │    │   Orders DB   │
+    │   (Master)    │    │   (Master)    │    │   (Master)    │
+    └───────┬───────┘    └───────┬───────┘    └───────┬───────┘
+            │                    │                    │
+      ┌─────┴─────┐        ┌─────┴─────┐        ┌─────┴─────┐
+      │           │        │           │        │           │
+      ▼           ▼        ▼           ▼        ▼           ▼
+  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐
+  │Read   │  │Read   │  │Read   │  │Read   │  │Read   │  │Read   │
+  │Replica│  │Replica│  │Replica│  │Replica│  │Replica│  │Replica│
+  └───────┘  └───────┘  └───────┘  └───────┘  └───────┘  └───────┘
+
+Each federated database can have its own:
+  • Master for writes
+  • Multiple read replicas
+  • Independent scaling
+  • Different hardware specs
+```
+
+## Real-World Example: E-Commerce
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    E-COMMERCE FEDERATED ARCHITECTURE                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    User Service              Product Service           Order Service
+         │                          │                         │
+         ▼                          ▼                         ▼
+┌─────────────────┐        ┌─────────────────┐        ┌─────────────────┐
+│    Users DB     │        │   Products DB   │        │    Orders DB    │
+│                 │        │                 │        │                 │
+│ • user_id (PK)  │        │ • product_id(PK)│        │ • order_id (PK) │
+│ • email         │        │ • name          │        │ • user_id (FK)  │
+│ • password_hash │        │ • description   │        │ • total_amount  │
+│ • profile       │        │ • price         │        │ • status        │
+│ • preferences   │        │ • inventory     │        │ • created_at    │
+│                 │        │ • category_id   │        │                 │
+│ Traffic: High   │        │ Traffic: Medium │        │ Traffic: High   │
+│ Writes: Medium  │        │ Writes: Low     │        │ Writes: High    │
+└─────────────────┘        └─────────────────┘        └─────────────────┘
+        │                          │                         │
+        │     PostgreSQL           │      MySQL              │   PostgreSQL
+        │     3 Read Replicas      │   2 Read Replicas       │   5 Read Replicas
+        │                          │                         │
+        └──────────────────────────┴─────────────────────────┘
+                                   │
+                    Each DB can use different:
+                    • Database technology
+                    • Hardware specifications
+                    • Scaling strategies
+                    • Backup policies
+```
+
+## Federation vs Sharding
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         FEDERATION vs SHARDING                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+FEDERATION (Vertical/Functional Split):
+Split by FUNCTION - different tables in different databases
+
+    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+    │  Users DB   │    │ Products DB │    │  Orders DB  │
+    │ (all users) │    │(all products)│   │(all orders) │
+    └─────────────┘    └─────────────┘    └─────────────┘
+    
+    Different tables → Different databases
+
+
+SHARDING (Horizontal Split):
+Split by DATA - same table split across databases
+
+    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+    │  Users DB   │    │  Users DB   │    │  Users DB   │
+    │  Shard 1    │    │  Shard 2    │    │  Shard 3    │
+    │ (Users A-H) │    │ (Users I-P) │    │ (Users Q-Z) │
+    └─────────────┘    └─────────────┘    └─────────────┘
+    
+    Same table → Split by rows
+```
+
+| Aspect | Federation | Sharding |
+|--------|-----------|----------|
+| **Split by** | Function/Domain | Data/Rows |
+| **Schema** | Different per DB | Same across shards |
+| **Complexity** | Lower | Higher |
+| **Joins** | Cross-DB joins needed | Cross-shard joins needed |
+| **Scaling** | Limited (finite functions) | Unlimited (add more shards) |
+| **Use case** | Microservices, domain separation | Massive datasets |
+| **Can combine** | Yes - federate first, then shard each | Yes |
+
+## Combined Approach: Federation + Sharding
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    FEDERATION + SHARDING (Real-World)                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+First: Federate by function
+Then: Shard databases that grow too large
+
+                         Application Layer
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+        ▼                      ▼                      ▼
+   ┌─────────┐           ┌─────────┐           ┌─────────┐
+   │ Users   │           │Products │           │ Orders  │
+   │   DB    │           │   DB    │           │   DB    │
+   │(federated)          │(federated)          │(federated)
+   └────┬────┘           └─────────┘           └────┬────┘
+        │                (not sharded             │
+        │                 - small)                 │
+        │                                          │
+   ┌────┴────┐                              ┌──────┴──────┐
+   │ SHARDED │                              │   SHARDED   │
+   │ (large) │                              │   (large)   │
+   ▼         ▼                              ▼             ▼
+┌──────┐ ┌──────┐                      ┌──────┐     ┌──────┐
+│Shard1│ │Shard2│                      │Shard1│     │Shard2│
+│A-M   │ │N-Z   │                      │2023  │     │2024  │
+└──────┘ └──────┘                      └──────┘     └──────┘
+   Users DB (100M users)                Orders DB (by year)
+   sharded by user_id                   sharded by date
+```
+
+## Handling Cross-Database Queries
+
+**The Challenge:** With federation, data lives in separate databases. How do you join?
+
+### Solution 1: Application-Level Joins
+
+```python
+# Instead of SQL JOIN, do it in application code
+
+# Step 1: Get order from Orders DB
+order = orders_db.query("SELECT * FROM orders WHERE id = 123")
+
+# Step 2: Get user from Users DB  
+user = users_db.query("SELECT * FROM users WHERE id = ?", order.user_id)
+
+# Step 3: Get products from Products DB
+products = products_db.query(
+    "SELECT * FROM products WHERE id IN (?)", 
+    order.product_ids
+)
+
+# Step 4: Combine in application
+result = {
+    "order": order,
+    "user": user,
+    "products": products
+}
+```
+
+### Solution 2: Data Denormalization
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      DENORMALIZATION                            │
+│                                                                 │
+│  Instead of joining, duplicate commonly needed data             │
+│                                                                 │
+│  Orders DB:                                                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ order_id │ user_id │ user_name │ user_email │ total    │   │
+│  │   123    │   456   │  "Alice"  │ "a@b.com"  │  $99.00  │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                    ↑                                            │
+│           Duplicated from Users DB                              │
+│           (No join needed!)                                     │
+│                                                                 │
+│  Trade-off: Storage vs Query complexity                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Solution 3: API Composition
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    API COMPOSITION PATTERN                       │
+└──────────────────────────────────────────────────────────────────┘
+
+    Client Request: GET /orders/123/details
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │    API Gateway /      │
+              │   Aggregator Service  │
+              └───────────┬───────────┘
+                          │
+        ┌─────────────────┼─────────────────┐
+        │                 │                 │
+        ▼                 ▼                 ▼
+  ┌───────────┐    ┌───────────┐    ┌───────────┐
+  │  Orders   │    │   Users   │    │ Products  │
+  │  Service  │    │  Service  │    │  Service  │
+  └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
+        │                │                │
+        ▼                ▼                ▼
+  ┌───────────┐    ┌───────────┐    ┌───────────┐
+  │ Orders DB │    │ Users DB  │    │Products DB│
+  └───────────┘    └───────────┘    └───────────┘
+        │                │                │
+        └────────────────┴────────────────┘
+                         │
+                         ▼
+                  Combined Response
+```
+
+## Advantages of Federation
+
+| Advantage | Description |
+|-----------|-------------|
+| **Independent scaling** | Scale each database based on its needs |
+| **Isolation** | One DB failure doesn't affect others |
+| **Team ownership** | Different teams can own different DBs |
+| **Technology flexibility** | Use best DB for each use case (SQL, NoSQL, etc.) |
+| **Better performance** | Smaller DBs = faster queries, smaller indexes |
+| **Easier maintenance** | Schema changes don't affect other domains |
+| **Parallel development** | Teams can work independently |
+
+## Disadvantages of Federation
+
+| Disadvantage | Description |
+|--------------|-------------|
+| **No cross-DB joins** | Must join in application layer |
+| **Distributed transactions** | ACID across DBs is complex (need Saga/2PC) |
+| **Data consistency** | Eventual consistency between DBs |
+| **Operational complexity** | Multiple DBs to manage, monitor, backup |
+| **Referential integrity** | Can't enforce foreign keys across DBs |
+| **More infrastructure** | More servers, more cost |
+
+## When to Use Federation
+
+**Use Federation when:**
+- Clear domain boundaries exist (Users, Products, Orders)
+- Different data has different access patterns
+- Teams are organized by domain (microservices)
+- You need independent scaling per domain
+- Different parts need different DB technologies
+
+**Don't use Federation when:**
+- Heavy cross-domain queries are needed
+- Data is tightly coupled
+- Small application (overhead not worth it)
+- Strong consistency required across domains
+
+## Federation in Microservices
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  MICROSERVICES + DATABASE FEDERATION                        │
+│                       (Database per Service Pattern)                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+           ┌─────────────────────────────────────────────────┐
+           │                  API Gateway                    │
+           └──────────────────────┬──────────────────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+        ▼                         ▼                         ▼
+┌───────────────┐        ┌───────────────┐        ┌───────────────┐
+│ User Service  │        │Product Service│        │ Order Service │
+│               │        │               │        │               │
+│  REST API     │        │  REST API     │        │  REST API     │
+└───────┬───────┘        └───────┬───────┘        └───────┬───────┘
+        │                        │                        │
+        │ ONLY this              │ ONLY this              │ ONLY this
+        │ service can            │ service can            │ service can
+        │ access                 │ access                 │ access
+        ▼                        ▼                        ▼
+┌───────────────┐        ┌───────────────┐        ┌───────────────┐
+│   Users DB    │        │  Products DB  │        │   Orders DB   │
+│  (PostgreSQL) │        │   (MongoDB)   │        │  (PostgreSQL) │
+└───────────────┘        └───────────────┘        └───────────────┘
+
+Key Rule: Services communicate via APIs, NOT direct DB access!
+```
+
+## Interview Tips
+
+**Common questions:**
+
+*"What is database federation?"*
+→ Splitting a database by function/domain into separate databases. Each handles a specific business area (Users DB, Orders DB, etc.).
+
+*"Federation vs Sharding?"*
+→ Federation splits by function (different tables), Sharding splits by data (same table, different rows). Federation is vertical, Sharding is horizontal.
+
+*"How do you handle joins across federated databases?"*
+→ Application-level joins, data denormalization, or API composition. No direct SQL joins across databases.
+
+*"What are the challenges of federation?"*
+→ Cross-DB joins, distributed transactions (need Saga pattern), eventual consistency, operational complexity.
+
+*"When would you use federation?"*
+→ Microservices architecture, clear domain boundaries, different scaling needs per domain, team autonomy.
+
+**Key points to remember:**
+- Federation = split by function/domain (vertical)
+- Sharding = split by data/rows (horizontal)
+- Can combine both: federate first, then shard large DBs
+- Cross-DB queries: use application joins or denormalization
+- Common in microservices (database per service pattern)
+- Trade-off: independence vs query complexity
