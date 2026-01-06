@@ -1251,3 +1251,753 @@ A **central orchestrator** tells each service what to do and handles failures.
 - Two approaches: Choreography (events) and Orchestration (central controller)
 - Always design compensations before implementing the saga
 
+# Data Partitioning (Sharding)
+
+Data partitioning is the technique of **splitting a large database into smaller, more manageable pieces** called partitions or shards. Each partition can be stored on different machines, allowing the system to scale horizontally.
+
+**Simple definition:** Instead of one big database, split data across multiple smaller databases.
+
+## Why do we need Partitioning?
+
+As your application grows, a single database becomes a bottleneck:
+
+| Problem | Description |
+|---------|-------------|
+| **Storage limit** | Single machine can't hold all data (TBs/PBs) |
+| **Read/Write throughput** | One DB can't handle millions of queries/sec |
+| **Single point of failure** | One DB down = entire app down |
+| **Slow queries** | Large tables = slow scans and indexes |
+
+**Partitioning solves these by:**
+- Distributing data across multiple machines
+- Parallel query execution
+- Better fault isolation
+- Smaller indexes per partition
+
+![shard-before-after](../diagrams/shard-before-after.png)
+
+## Types of Partitioning
+
+### 1. Horizontal Partitioning (Sharding)
+
+Split **rows** of a table across multiple databases. Each shard has the **same schema** but different rows.
+
+```
+                        HORIZONTAL PARTITIONING
+                        
+Original Table (Users):
+┌────────┬──────────┬─────────┬────────────────┐
+│ UserID │   Name   │  Email  │    Country     │
+├────────┼──────────┼─────────┼────────────────┤
+│   1    │  Alice   │  a@...  │      USA       │
+│   2    │   Bob    │  b@...  │      UK        │
+│   3    │ Charlie  │  c@...  │      USA       │
+│   4    │  David   │  d@...  │     India      │
+│   5    │   Eve    │  e@...  │      UK        │
+│   6    │  Frank   │  f@...  │     India      │
+└────────┴──────────┴─────────┴────────────────┘
+
+After Sharding (by Country):
+
+  Shard 1 (USA)              Shard 2 (UK)             Shard 3 (India)
+┌────────┬─────────┐     ┌────────┬─────────┐     ┌────────┬─────────┐
+│ UserID │  Name   │     │ UserID │  Name   │     │ UserID │  Name   │
+├────────┼─────────┤     ├────────┼─────────┤     ├────────┼─────────┤
+│   1    │  Alice  │     │   2    │   Bob   │     │   4    │  David  │
+│   3    │ Charlie │     │   5    │   Eve   │     │   6    │  Frank  │
+└────────┴─────────┘     └────────┴─────────┘     └────────┴─────────┘
+
+✓ Same columns in each shard
+✓ Different rows in each shard
+```
+
+**Use cases:**
+- User data (shard by user_id or region)
+- Orders (shard by customer_id or date)
+- Social media posts (shard by user_id)
+
+### 2. Vertical Partitioning
+
+Split **columns** of a table into separate tables/databases. Different tables have **different columns**.
+
+```
+                        VERTICAL PARTITIONING
+                        
+Original Table (Users):
+┌────────┬──────────┬─────────┬───────────┬─────────────┬──────────────┐
+│ UserID │   Name   │  Email  │  Password │   Avatar    │   Settings   │
+│        │          │         │  (hash)   │  (5MB blob) │  (JSON 1KB)  │
+└────────┴──────────┴─────────┴───────────┴─────────────┴──────────────┘
+
+After Vertical Partitioning:
+
+ Table 1: User_Core           Table 2: User_Auth         Table 3: User_Media
+ (Frequently accessed)        (Auth operations)          (Large blobs)
+┌────────┬──────────┐       ┌────────┬───────────┐     ┌────────┬─────────────┐
+│ UserID │   Name   │       │ UserID │  Password │     │ UserID │   Avatar    │
+│        │          │       │        │           │     │        │             │
+└────────┴──────────┘       └────────┴───────────┘     └────────┴─────────────┘
+
+✓ Separate frequently vs rarely accessed data
+✓ Keep large blobs separate from small data
+✓ Different tables can be on different servers
+```
+
+**Use cases:**
+- Separate large blobs (images, files) from metadata
+- Separate sensitive data (passwords, PII)
+- Separate hot (frequently accessed) vs cold data
+
+### Horizontal vs Vertical Comparison
+
+| Aspect | Horizontal (Sharding) | Vertical |
+|--------|----------------------|----------|
+| **Splits** | Rows | Columns |
+| **Schema** | Same across shards | Different tables |
+| **Scalability** | Very high (add more shards) | Limited (finite columns) |
+| **Use case** | Large datasets, high traffic | Different access patterns |
+| **Complexity** | Higher (routing, joins) | Lower |
+| **Common in** | Large-scale apps (Twitter, Facebook) | Most applications |
+
+## Sharding Strategies (Partition Key Selection)
+
+How do you decide **which row goes to which shard**? The answer is the **partition key** (or shard key).
+
+### 1. Range-Based Sharding
+
+Partition based on **ranges of values**.
+
+```
+Shard by User ID ranges:
+
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│    Shard 1      │   │    Shard 2      │   │    Shard 3      │
+│  UserID: 1-1M   │   │ UserID: 1M-2M   │   │ UserID: 2M-3M   │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
+```
+
+**Pros:**
+- Simple to implement
+- Range queries are efficient (all data in one shard)
+- Easy to understand
+
+**Cons:**
+- **Hotspots** - new users (high IDs) all go to latest shard
+- Uneven distribution if data isn't uniform
+
+### 2. Hash-Based Sharding
+
+Apply a **hash function** to the partition key.
+
+```
+shard_number = hash(user_id) % number_of_shards
+
+Example: 4 shards
+  User 101 → hash(101) % 4 = 1 → Shard 1
+  User 102 → hash(102) % 4 = 2 → Shard 2
+  User 103 → hash(103) % 4 = 3 → Shard 3
+  User 104 → hash(104) % 4 = 0 → Shard 0
+```
+
+**Pros:**
+- Even distribution (no hotspots)
+- Works well for any data type
+
+**Cons:**
+- Range queries are expensive (need to query all shards)
+- **Resharding is painful** - adding shards changes hash, requires data migration
+
+### 3. Directory-Based Sharding
+
+Maintain a **lookup table** that maps data to shards.
+
+```
+┌────────────────────────────┐
+│      Lookup Service        │
+│  ┌──────────┬───────────┐  │
+│  │  UserID  │   Shard   │  │
+│  ├──────────┼───────────┤  │
+│  │  1-1000  │  Shard 1  │  │
+│  │ 1001-5000│  Shard 2  │  │
+│  │ VIP users│  Shard 3  │  │
+│  └──────────┴───────────┘  │
+└────────────────────────────┘
+         │
+         ▼
+    Query: "Where is User 500?"
+    Answer: "Shard 1"
+```
+
+**Pros:**
+- Flexible - can move data without changing logic
+- Custom placement (VIP users on faster hardware)
+- Easy resharding
+
+**Cons:**
+- Lookup service is single point of failure
+- Extra network hop for every query
+
+### 4. Geo-Based Sharding
+
+Partition based on **geographic location**.
+
+```
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│   US-East DC    │   │   EU-West DC    │   │   Asia DC       │
+│  US users data  │   │  EU users data  │   │  Asia users     │
+└─────────────────┘   └─────────────────┘   └─────────────────┘
+```
+
+**Pros:**
+- Low latency for users (data is nearby)
+- Compliance (GDPR - EU data stays in EU)
+
+**Cons:**
+- Complex for users who travel
+- Cross-region queries are slow
+
+### Strategy Comparison
+
+| Strategy | Distribution | Range Queries | Resharding | Complexity |
+|----------|-------------|---------------|------------|------------|
+| **Range** | Can be uneven | ✅ Efficient | Medium | Low |
+| **Hash** | Even | ❌ All shards | Hard | Low |
+| **Directory** | Flexible | Depends | Easy | High |
+| **Geo** | By location | Regional only | Medium | Medium |
+
+## Common Problems with Sharding
+
+### 1. Hotspots
+
+One shard receives disproportionately more traffic.
+
+```
+Example: Celebrity Problem
+- Justin Bieber has 100M followers
+- All follower data on one shard
+- That shard is overloaded!
+
+Solutions:
+- Further split hot shards
+- Replicate hot data
+- Use hash-based sharding
+```
+
+### 2. Cross-Shard Queries (Scatter-Gather)
+
+Query needs data from multiple shards.
+
+```
+Query: "Find all orders > $100"
+
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│ Shard 1 │     │ Shard 2 │     │ Shard 3 │
+└────┬────┘     └────┬────┘     └────┬────┘
+     │               │               │
+     └───────────────┼───────────────┘
+                     │
+                     ▼
+              Coordinator
+              (merge results)
+
+Problem: Slow! Need to query ALL shards
+Solution: Design queries to target single shard
+```
+
+### 3. Cross-Shard Joins
+
+Joining data across shards is very expensive.
+
+```
+Query: "Get user info with their orders"
+- User data on Shard 1 (user_id based)
+- Order data on Shard 2 (order_id based)
+
+Solution: 
+- Denormalize (duplicate data)
+- Co-locate related data on same shard
+- Use same partition key for related tables
+```
+
+### 4. Rebalancing / Resharding
+
+Adding or removing shards requires data migration.
+
+```
+Before: 3 shards
+hash(key) % 3 = shard_number
+
+After: 4 shards  
+hash(key) % 4 = shard_number ← Different result!
+
+Many keys move to different shards = EXPENSIVE
+
+Solution: Consistent Hashing
+```
+
+### 5. Consistent Hashing (Solution to Resharding)
+
+Minimizes data movement when adding/removing shards.
+
+```
+                    Hash Ring
+                    
+                   0/360°
+                     │
+            Shard A ─┼─ Shard B
+                    ╱ ╲
+                   ╱   ╲
+                  ╱     ╲
+          Shard D ───────── Shard C
+                   180°
+
+- Data hashes to a point on the ring
+- Assigned to next shard clockwise
+- Adding shard only moves data from neighbors
+
+Adding Shard E between A and B:
+- Only keys between A and E move
+- Other shards unaffected!
+```
+
+## Sharding Best Practices
+
+1. **Choose partition key carefully**
+   - High cardinality (many unique values)
+   - Even distribution
+   - Used in most queries
+
+2. **Avoid cross-shard operations**
+   - Design schema to co-locate related data
+   - Denormalize if needed
+
+3. **Plan for growth**
+   - Use consistent hashing
+   - Start with more shards than needed
+
+4. **Monitor shard health**
+   - Track size and traffic per shard
+   - Rebalance before problems occur
+
+5. **Consider using managed solutions**
+   - MongoDB Atlas, Amazon DynamoDB, CockroachDB
+   - They handle sharding complexity
+
+## When to Shard (and When NOT to)
+
+**Shard when:**
+- Single DB can't handle load (after optimizing)
+- Data exceeds single machine storage
+- Need geographic distribution
+- Availability requirements demand it
+
+**Don't shard if:**
+- You can still optimize (indexes, queries, caching)
+- You can scale vertically (bigger machine)
+- Data size is manageable
+- Complexity cost outweighs benefits
+
+**Rule of thumb:** Sharding adds significant complexity. Try everything else first!
+
+## Interview Tips for SDE1
+
+**Common questions:**
+
+*"What is sharding?"*
+→ Splitting a database horizontally across multiple machines. Each machine holds a subset of rows.
+
+*"Horizontal vs Vertical partitioning?"*
+→ Horizontal = split rows (sharding), Vertical = split columns. Horizontal scales better.
+
+*"How do you choose a shard key?"*
+→ High cardinality, even distribution, present in most queries. Avoid timestamps or sequential IDs for range sharding.
+
+*"What's the problem with hash sharding?"*
+→ Resharding requires moving lots of data. Solution: consistent hashing.
+
+*"How do you handle joins across shards?"*
+→ Denormalize, co-locate related data, or use application-level joins.
+
+**Key points to remember:**
+- Sharding = horizontal scaling for databases
+- Partition key determines data distribution
+- Hash sharding = even distribution, range sharding = efficient range queries
+- Consistent hashing minimizes data movement
+- Avoid cross-shard queries and joins
+- Shard as last resort - adds significant complexity
+
+# Consistent Hashing
+
+Consistent hashing is a distributed hashing technique that **minimizes data redistribution** when nodes are added or removed from a cluster. It maps both data and nodes onto a circular hash space (hash ring).
+
+**Simple definition:** A smart way to distribute data across servers so that adding/removing servers only moves a small amount of data.
+
+## The Problem: Traditional Hash-Based Distribution
+
+With traditional hashing, we use modulo to assign data to nodes:
+
+```
+node = hash(key) % N     (where N = number of nodes)
+```
+
+**Example with 4 nodes:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TRADITIONAL HASHING                          │
+│                                                                 │
+│  hash(key) % 4 = node_number                                    │
+│                                                                 │
+│  Key "user_1"  → hash = 14 → 14 % 4 = 2 → Node 2               │
+│  Key "user_2"  → hash = 25 → 25 % 4 = 1 → Node 1               │
+│  Key "user_3"  → hash = 38 → 38 % 4 = 2 → Node 2               │
+│  Key "user_4"  → hash = 47 → 47 % 4 = 3 → Node 3               │
+│  Key "user_5"  → hash = 52 → 52 % 4 = 0 → Node 0               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**The Problem: Adding a 5th node**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│             NOW: hash(key) % 5                                  │
+│                                                                 │
+│  Key "user_1"  → 14 % 5 = 4 → Node 4  (was Node 2) ❌ MOVED    │
+│  Key "user_2"  → 25 % 5 = 0 → Node 0  (was Node 1) ❌ MOVED    │
+│  Key "user_3"  → 38 % 5 = 3 → Node 3  (was Node 2) ❌ MOVED    │
+│  Key "user_4"  → 47 % 5 = 2 → Node 2  (was Node 3) ❌ MOVED    │
+│  Key "user_5"  → 52 % 5 = 2 → Node 2  (was Node 0) ❌ MOVED    │
+│                                                                 │
+│  Result: ALL 5 keys moved! (In reality: ~80% keys move)        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why is this bad?**
+- Adding 1 server requires moving ~80% of data
+- Massive network traffic during rebalancing
+- Cache misses spike (all cached data invalidated)
+- System performance degrades significantly
+
+## How Consistent Hashing Solves This
+
+Instead of modulo, we use a **hash ring** (circular space from 0 to 2^32 - 1).
+
+### Step 1: Place Nodes on the Ring
+
+Hash each node's identifier to get its position on the ring.
+
+```
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱          ╲
+                  ╱            ╲
+           Node A ●            ● Node B
+           (pos: 50)           (pos: 150)
+                 │              │
+                 │              │
+                 │              │
+           Node D ●            ● Node C
+           (pos: 300)          (pos: 220)
+                  ╲            ╱
+                   ╲          ╱
+                    └────┬────┘
+                         │
+                     (wraps to 0)
+```
+
+### Step 2: Place Keys on the Ring
+
+Hash each key to get its position, then assign it to the **first node clockwise**.
+
+```
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱    K1     ╲
+                  ╱     ↓       ╲
+           Node A ●────────────● Node B
+                 │              │
+              K4 │              │ K2
+                 ↓              ↓
+           Node D ●────────────● Node C
+                  ╲     ↑      ╱
+                   ╲   K3     ╱
+                    └────┬────┘
+                         │
+
+Key Assignment (clockwise to nearest node):
+┌─────────┬──────────┬────────────────────┐
+│   Key   │ Position │   Assigned Node    │
+├─────────┼──────────┼────────────────────┤
+│   K1    │    80    │ Node B (pos: 150)  │
+│   K2    │   180    │ Node C (pos: 220)  │
+│   K3    │   280    │ Node D (pos: 300)  │
+│   K4    │   320    │ Node A (pos: 50)   │
+└─────────┴──────────┴────────────────────┘
+```
+
+### Step 3: Adding a Node (Minimal Redistribution!)
+
+Add Node E at position 100:
+
+```
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱    K1     ╲
+                  ╱     ↓       ╲
+           Node A ●    ● Node E ● Node B
+           (50)       (100)     (150)
+                 │              │
+              K4 │              │ K2
+                 ↓              ↓
+           Node D ●────────────● Node C
+                  ╲            ╱
+                   ╲          ╱
+                    └────┬────┘
+
+After adding Node E:
+┌─────────┬────────────────────────────────────────────────┐
+│   Key   │                    Result                      │
+├─────────┼────────────────────────────────────────────────┤
+│   K1    │ Node E (was B) ← ONLY this key moves!         │
+│   K2    │ Node C ✓ (unchanged)                          │
+│   K3    │ Node D ✓ (unchanged)                          │
+│   K4    │ Node A ✓ (unchanged)                          │
+└─────────┴────────────────────────────────────────────────┘
+
+Only keys between Node A (50) and Node E (100) move to Node E.
+Other keys stay with their original nodes!
+```
+
+### Step 4: Removing a Node
+
+If Node C is removed, only its keys move to the next node (Node D):
+
+```
+Node C removed:
+- K2 was on Node C (pos: 220)
+- K2 now goes to Node D (pos: 300) - next clockwise
+
+Only K2 moves! Other keys unaffected.
+```
+
+## The Math: How Much Data Moves?
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   Traditional Hashing:    ~(N-1)/N keys move                   │
+│   (adding 1 node to N)    With 4→5 nodes: ~80% keys move       │
+│                                                                 │
+│   Consistent Hashing:     ~K/N keys move                       │
+│   (adding 1 node to N)    With 4→5 nodes: ~20% keys move       │
+│                                                                 │
+│   R = K / N                                                     │
+│   Where: R = data to redistribute                               │
+│          K = total number of keys                               │
+│          N = number of nodes                                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Problem: Uneven Distribution
+
+With only a few nodes, keys may not be evenly distributed:
+
+```
+                    Problem: Uneven Load
+                    
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱          ╲
+                  ╱            ╲
+           Node A ●            
+           (pos: 50)           
+                 │              
+                 │              Node B, C, D clustered here
+                 │              ↓
+                 │            ●●● 
+                  ╲            ╱
+                   ╲          ╱
+                    └────┬────┘
+                    
+Node A handles ~80% of keys! (Hotspot)
+Nodes B, C, D share only ~20%
+```
+
+## Solution: Virtual Nodes (VNodes)
+
+Instead of 1 position per node, each physical node gets **multiple positions** on the ring.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      VIRTUAL NODES                              │
+│                                                                 │
+│   Physical Node A → VNode A1, A2, A3 (3 positions on ring)     │
+│   Physical Node B → VNode B1, B2, B3                           │
+│   Physical Node C → VNode C1, C2, C3                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱   A1  B2  ╲
+                  ╱      C1     ╲
+                 ╱               ╲
+                │ B1          A2 │
+                │                │
+                │ C3          B3 │
+                 ╲               ╱
+                  ╲     A3     ╱
+                   ╲   C2  B1╱
+                    └────┬────┘
+                         │
+
+Now: Nodes are spread evenly around the ring!
+     Each node handles roughly equal load.
+```
+
+**How VNodes are created:**
+```
+VNode_position = hash(node_id + "_" + vnode_index)
+
+Example for Node A with 3 VNodes:
+  hash("NodeA_0") = position 50   → VNode A1
+  hash("NodeA_1") = position 180  → VNode A2  
+  hash("NodeA_2") = position 290  → VNode A3
+```
+
+**Benefits of VNodes:**
+| Benefit | Description |
+|---------|-------------|
+| **Even distribution** | More points = more uniform spread |
+| **Flexible capacity** | Powerful nodes can have more VNodes |
+| **Faster rebalancing** | When node fails, its load spreads to many nodes |
+| **Gradual migration** | Can move VNodes one at a time |
+
+## Data Replication with Consistent Hashing
+
+For high availability, data is replicated to **N nodes clockwise** from its position.
+
+```
+Replication Factor = 3 (store data on 3 nodes)
+
+                         0
+                         │
+                    ┌────┴────┐
+                   ╱          ╲
+                  ╱            ╲
+           Node A ●            ● Node B
+                 │     K1      │
+                 │      ↓      │
+                 │   ┌─────┐   │
+                 │   │ K1  │   │
+           Node D ●──┤stored├──● Node C
+                  ╲  │on B, │  ╱
+                   ╲ │C, D  │ ╱
+                    └┴─────┴─┘
+
+K1 at position 80:
+- Primary: Node B (first clockwise)
+- Replica 1: Node C (second clockwise)
+- Replica 2: Node D (third clockwise)
+
+If Node B fails → read from C or D
+```
+
+## Consistent Hashing: Complete Example
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    COMPLETE WALKTHROUGH                         │
+└─────────────────────────────────────────────────────────────────┘
+
+Initial Setup: 3 Nodes, Hash Range 0-359 (like degrees)
+
+1. Hash nodes to get positions:
+   hash("Server1") % 360 = 60   → S1 at position 60
+   hash("Server2") % 360 = 180  → S2 at position 180
+   hash("Server3") % 360 = 300  → S3 at position 300
+
+2. Hash keys to get positions:
+   hash("user_alice") % 360 = 45   → goes to S1 (next clockwise after 45)
+   hash("user_bob") % 360 = 120    → goes to S2 (next clockwise after 120)
+   hash("user_carol") % 360 = 200  → goes to S3 (next clockwise after 200)
+   hash("user_dave") % 360 = 330   → goes to S1 (wraps around, next is 60)
+
+```
+![consistent hasing](../diagrams/consistent-hashing.png)
+```
+
+3. ADD Server4 at position 240:
+   - Only keys between S2 (180) and S4 (240) move
+   - user_carol (200) moves from S3 to S4
+   - Other keys unchanged!
+
+4. REMOVE Server2:
+   - Only keys between S1 (60) and S2 (180) move to S3
+   - user_bob (120) moves from S2 to S3
+   - Other keys unchanged!
+```
+
+## Advantages & Disadvantages
+
+| Advantages | Disadvantages |
+|------------|---------------|
+| ✅ Minimal data movement on scaling | ❌ More complex to implement |
+| ✅ Horizontal scalability | ❌ Potential for cascading failures |
+| ✅ Even distribution with VNodes | ❌ Load can still be uneven without VNodes |
+| ✅ Works well with replication | ❌ Key management overhead on node failures |
+| ✅ No central coordination needed | ❌ Need good hash function |
+
+## Real-World Usage
+
+| System | How it uses Consistent Hashing |
+|--------|-------------------------------|
+| **Apache Cassandra** | Data partitioning across nodes |
+| **Amazon DynamoDB** | Distributing data across storage hosts |
+| **Memcached** | Distributing cache keys across servers |
+| **Discord** | Distributing chat messages across servers |
+| **Akamai CDN** | Routing requests to cache servers |
+| **Riak** | Distributed key-value storage |
+
+## Consistent Hashing vs Traditional Hashing
+
+| Aspect | Traditional (Modulo) | Consistent Hashing |
+|--------|---------------------|-------------------|
+| **Redistribution** | ~80% keys move | ~K/N keys move |
+| **Add/Remove node** | Expensive | Cheap |
+| **Implementation** | Simple | Complex |
+| **Load balancing** | Good if static | Good with VNodes |
+| **Best for** | Fixed infrastructure | Dynamic scaling |
+
+## Interview Tips
+
+**Common questions:**
+
+*"What is consistent hashing?"*
+→ A technique that maps both keys and nodes to a ring, assigning keys to the nearest node clockwise. When nodes change, only K/N keys need to move instead of most keys.
+
+*"Why use consistent hashing over modulo?"*
+→ With modulo, adding/removing a server moves ~80% of data. Consistent hashing only moves ~20% (K/N).
+
+*"What are virtual nodes?"*
+→ Multiple hash positions per physical node to ensure even distribution. Prevents hotspots and allows flexible capacity.
+
+*"How is data replicated?"*
+→ Store data on N consecutive nodes clockwise from the key's position. Provides fault tolerance.
+
+*"What's the formula for data redistribution?"*
+→ R = K/N, where R is data to move, K is total keys, N is number of nodes.
+
+**Key points to remember:**
+- Hash ring = circular space, keys go to next node clockwise
+- Adding node: only keys between new node and its predecessor move
+- VNodes = multiple positions per physical node, better distribution
+- Used by: Cassandra, DynamoDB, Memcached
+- Trade-off: complexity for minimal redistribution
+
+
