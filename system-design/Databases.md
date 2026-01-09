@@ -2386,3 +2386,12 @@ Key Rule: Services communicate via APIs, NOT direct DB access!
 - Cross-DB queries: use application joins or denormalization
 - Common in microservices (database per service pattern)
 - Trade-off: independence vs query complexity
+
+---
+
+## Related Topics
+
+- [Architecture Patterns](../system-design/Architecture-Patterns.md) - Database per service in microservices
+- [Event-Driven Architecture](../system-design/Event-Driven-Architecture.md) - Event stores and CQRS
+- [Message Systems](../system-design/Message-Systems.md) - Message persistence
+- [Caching](../system-design/Caching.md) - Cache database queries

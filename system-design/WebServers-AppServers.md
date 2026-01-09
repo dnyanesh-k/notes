@@ -1672,5 +1672,16 @@ A: Don't store sessions in server memory. Use:
 
 ---
 
+---
+
+## Related Topics
+
+- [API Design](../system-design/API-Design.md) - REST, GraphQL, gRPC APIs
+- [Architecture Patterns](../system-design/Architecture-Patterns.md) - N-tier architecture and microservices
+- [Load Balancing](../system-design/LoadBalancing.md) - Distribute traffic across servers
+- [Caching](../system-design/Caching.md) - Cache layer for performance
+
+---
+
 *Last updated: January 2026*
 
