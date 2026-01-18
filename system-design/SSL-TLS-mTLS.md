@@ -4,9 +4,6 @@ A comprehensive guide to SSL (Secure Sockets Layer), TLS (Transport Layer Securi
 
 ---
 
-if __name__ == "__main__":
-    main()
-
 ## Table of Contents
 
 1. [What are SSL, TLS, and mTLS?](#what-are-ssl-tls-and-mtls)
