@@ -15,9 +15,11 @@ The key to understanding why PUT is idempotent despite changing state lies in th
 1. ## State Change vs. Cumulative Effect
 State Change (PUT): When you send a PUT request, you provide a complete replacement for a resource. If you send PUT /user/1 with {"status": "active"}, the server sets the status to "active." If you send that exact same request 10 more times, the status remains "active." The state changed from its original value once, but it does not change again with subsequent identical requests.
 Cumulative Effect (Non-Idempotent): A non-idempotent operation like "increment counter by 1" (often implemented via POST or some PATCH instructions) changes the state every single time it is called. 
+
 2. ## PUT vs. POST Analogy
 - **PUT (Idempotent):** Like an "Elevator Call" button. Pressing it once requests the elevator. Pressing it five more times doesn't call five elevators; it just reinforces the same single request.
 - **POST (Non-Idempotent):** Like a "Submit Order" button. If you press it five times without protections, the server might create five separate orders, each with a different ID. 
+
 3. ## Comparison of Definitions
 
 Term 	     Meaning	                                                        Is PUT...?
