@@ -1,14 +1,4 @@
-# 50 Most Asked FastAPI Interview Questions
-1. What is FastAPI? How is it different from Flask and Django?
-Here's the first one — master this before moving to Q2.
-
----
-
 ## Q1. What is FastAPI? How is it different from Flask and Django?
-
----
-
-### Interview Answer
 
 - FastAPI is a **modern**, **high-performance** Python web framework built on top of Starlette for the web layer and Pydantic for data validation. 
 - It's designed specifically for building APIs quickly with type safety, automatic documentation and async support out of the box.
@@ -36,11 +26,117 @@ In Flask you'd need separate libraries like Marshmallow and Flasgger to achieve 
 | ORM | ❌ Bring your own | ❌ Bring your own | ✅ Built-in |
 | Best for | Microservices, AI APIs | Simple APIs, scripts | Monolithic web apps |
 
+---
+## Q2. What makes FastAPI fast?
+
+- FastAPI's performance comes from three layers working together.
+
+**1. Starlette** — FastAPI is built on top of Starlette which is an ASGI framework. ASGI allows handling multiple requests concurrently in a single thread using Python's event loop, unlike WSGI which handles one request at a time per worker. This is the biggest performance factor.
+
+**2. async/await natively** — because FastAPI is ASGI based, you can write async route handlers that don't block the event loop during I/O operations like DB queries or external API calls. So while one request waits for a DB response, the event loop serves other requests simultaneously.
+
+**3. Pydantic v2** — Pydantic v2 was rewritten in Rust. So all request validation, serialization and deserialization happens at near-native speed instead of pure Python, which is significantly faster than alternatives like Marshmallow.
+
+*In benchmarks FastAPI handles around 50,000-100,000 requests per second for simple endpoints — comparable to NodeJS and Go"*
 
 ---
 
-2. What makes FastAPI fast? (Starlette + Pydantic + async)
-3. What is ASGI? How is it different from WSGI?
+### The 3 Layers Visually
+
+```
+Request comes in
+      ↓
+Starlette (ASGI) — handles concurrency via event loop
+      ↓
+FastAPI routing — matches path, method
+      ↓
+Pydantic v2 (Rust) — validates and parses request data
+      ↓
+Your route handler (async) — business logic
+      ↓
+Pydantic v2 — serializes response
+      ↓
+Response goes out
+```
+
+---
+
+### Key Concepts to Remember
+
+| Component | What it does | Why it's fast |
+|---|---|---|
+| **Starlette** | ASGI web layer | Concurrent requests via event loop |
+| **Pydantic v2** | Validation + serialization | Rewritten in Rust |
+| **async/await** | Non-blocking I/O | No thread blocking during waits |
+| **Uvicorn** | ASGI server | Handles async connections efficiently |
+
+---
+
+### Follow-up They Might Ask
+
+*"But Python has GIL, so how is it truly concurrent?"*
+
+Answer:
+> *"GIL blocks CPU-bound threads but async I/O doesn't use threads — it uses the event loop. So GIL is irrelevant for async I/O operations. For CPU-bound tasks we'd use multiprocessing or offload to a worker like Celery."*
+
+## Q3. What is ASGI? How is it different from WSGI?
+
+"WSGI and ASGI are both interface specifications that define how a Python web application communicates with a web server — but they handle concurrency completely differently.
+
+WSGI — Web Server Gateway Interface — was introduced in 2003 and is synchronous. It handles one request at a time per worker process. So if you have 4 Gunicorn workers, you can handle 4 simultaneous requests. If a request is waiting for a DB call, that worker is completely blocked doing nothing. To scale you just add more workers — which means more memory and processes.
+
+ASGI — Asynchronous Server Gateway Interface — is the modern successor. It's async first, so a single worker can handle thousands of concurrent connections using Python's event loop. When a request is waiting for I/O — DB, external API, file read — the worker doesn't block, it switches to serving another request. This is especially powerful for AI applications where you're waiting on LLM responses or vector DB queries which can take 200-500ms.
+
+---
+
+### The Core Difference Visually
+
+**WSGI — Synchronous**
+```
+Worker 1: Request A → waiting for DB... (BLOCKED) ← wasting time
+Worker 2: Request B → waiting for DB... (BLOCKED) ← wasting time
+Worker 3: Request C → waiting for DB... (BLOCKED) ← wasting time
+
+Need 100 concurrent requests? Need 100 workers. 💀
+```
+
+**ASGI — Asynchronous**
+```
+Worker 1: Request A → waiting for DB...
+          → switches to Request B → waiting for LLM...
+          → switches to Request C → processing...
+          → DB responds → back to Request A ✅
+
+1 worker handling hundreds of concurrent requests. 🚀
+```
+
+---
+
+### Key Comparison Table
+
+| Feature | WSGI | ASGI |
+|---|---|---|
+| Type | Synchronous | Asynchronous |
+| Introduced | 2003 | 2019 |
+| Concurrency model | One request per worker | Event loop, thousands per worker |
+| Blocking I/O | ❌ Blocks worker | ✅ Non-blocking |
+| WebSockets | ❌ Not supported | ✅ Native support |
+| Best for | Simple web apps | APIs, AI, real-time, microservices |
+| Servers | Gunicorn, uWSGI | Uvicorn, Hypercorn, Daphne |
+| Frameworks | Flask, Django | FastAPI, Starlette, Django 3.0+ |
+
+---
+
+### Follow-up They Might Ask
+
+*"Can Django use ASGI?"*
+> *"Yes, Django added ASGI support in version 3.0, but it's retrofitted — not native like FastAPI. You need to explicitly write async views, otherwise it falls back to sync behavior. FastAPI was designed async-first from day one."*
+
+*"When would you still choose WSGI?"*
+> *"For simple CRUD apps with low concurrency, or when team is more comfortable with Flask/Django and the workload doesn't justify async complexity. WSGI is simpler to debug and reason about."*
+
+---
+
 4. How does FastAPI auto-generate OpenAPI/Swagger documentation?
 5. What is Uvicorn? What role does it play in FastAPI?
 6. What is the difference between `async def` and `def` route handlers in FastAPI?
