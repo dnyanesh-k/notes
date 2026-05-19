@@ -2486,6 +2486,853 @@ And finally the auth dependency chain — the most common real-world pattern you
 The key interview insight: **dependency caching is scoped to a single request**. Across requests, each gets its own fresh resolution. Within a request, the same `Depends(x)` is evaluated once. That's how you safely share a DB session without accidentally sharing state between users.
 ---
 
+## Q32. How to Connect FastAPI to PostgreSQL Using SQLAlchemy?
+Connecting FastAPI to PostgreSQL involves three things — 
+**1. creating the engine** which is the connection pool, 
+**2. defining a session factory for per-request DB sessions**, and 
+**3. using dependency injection to provide sessions to route handlers**.
+
+The engine manages a pool of actual TCP connections to PostgreSQL — you don't create a new connection per request, you borrow one from the pool and return it when done. SQLAlchemy handles this automatically.
+
+### Complete Setup
+
+```
+PROJECT STRUCTURE
+─────────────────
+app/
+├── database.py      ← engine + session factory
+├── models.py        ← SQLAlchemy table models
+├── schemas.py       ← Pydantic models
+├── dependencies.py  ← get_db dependency
+└── main.py          ← FastAPI app
+```
+
+```python
+# database.py
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker
+)
+from sqlalchemy.orm import DeclarativeBase
+
+# ── Engine — connection pool ──
+# postgresql+asyncpg = async PostgreSQL driver
+engine = create_async_engine(
+    "postgresql+asyncpg://user:password@localhost/dbname",
+    pool_size=10,          # max persistent connections
+    max_overflow=20,       # extra connections under load
+    pool_timeout=30,       # wait this long for free connection
+    pool_recycle=1800,     # recycle connections every 30 mins
+    echo=False             # True = log all SQL (dev only)
+)
+
+# ── Session Factory ──
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False  # don't expire objects after commit
+)
+
+# ── Base class for all models ──
+class Base(DeclarativeBase):
+    pass
+```
+
+```python
+# models.py
+from sqlalchemy import String, Integer, Float, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime
+from .database import Base
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(500))
+    content: Mapped[str] = mapped_column(String)
+    embedding_id: Mapped[str] = mapped_column(
+        String(100), unique=True
+    )
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+```
+
+```python
+# dependencies.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from .database import AsyncSessionLocal
+
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session          # handler runs here
+            await session.commit() # commit if no exception
+        except Exception:
+            await session.rollback() # rollback on error
+            raise
+```
+
+```python
+# main.py
+from fastapi import FastAPI, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from .dependencies import get_db
+from .models import Document
+
+app = FastAPI()
+
+@app.get("/documents/{doc_id}")
+async def get_document(
+    doc_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404)
+    return doc
+```
+
+---
+
+### Connection Pool Visual
+
+```
+FastAPI App
+    │
+    │ request comes in
+    ▼
+get_db() dependency
+    │
+    │ borrows connection
+    ▼
+┌─────────────────────────────────┐
+│      CONNECTION POOL             │
+│                                  │
+│  conn1 ● (in use)               │
+│  conn2 ● (in use)               │
+│  conn3 ○ (free) ◄── borrowed    │
+│  conn4 ○ (free)                 │
+│  conn5 ○ (free)                 │
+│                                  │
+│  pool_size=10                   │
+│  max_overflow=20                │
+│  (up to 30 total under load)    │
+└──────────────┬──────────────────┘
+               │ TCP connection
+               ▼
+         PostgreSQL
+```
+
+---
+
+## Q33. Sync vs Async SQLAlchemy in FastAPI
+
+This is one of the most important architectural decisions in a FastAPI app. Sync SQLAlchemy blocks the thread — when you execute a query, that thread sits idle waiting for PostgreSQL to respond. In FastAPI's async architecture this is catastrophic because you're blocking the event loop, freezing all other requests.
+
+Async SQLAlchemy using asyncpg driver sends the query and awaits the response — the event loop is free to serve other requests while PostgreSQL processes the query. For an AI platform making frequent DB calls this is the difference between handling 100 concurrent requests and 10,000.
+
+---
+
+### The Core Difference
+
+```
+SYNC SQLAlchemy                ASYNC SQLAlchemy
+───────────────────            ──────────────────────
+
+from sqlalchemy import         from sqlalchemy.ext.asyncio
+  create_engine                  import create_async_engine
+
+engine = create_engine(        engine = create_async_engine(
+  "postgresql://..."             "postgresql+asyncpg://..."
+)                              )
+
+Session = sessionmaker(        AsyncSession = async_sessionmaker(
+  bind=engine                    bind=engine
+)                              )
+
+# route handler               # route handler
+def get_docs(                  async def get_docs(
+  db: Session                    db: AsyncSession
+    = Depends(get_db)              = Depends(get_db)
+):                             ):
+  # BLOCKS event loop            # frees event loop
+  docs = db.execute(             docs = await db.execute(
+    select(Document)               select(Document)
+  )                              )
+  return docs                    return docs
+```
+
+---
+
+### Performance Impact
+
+```
+SYNC under 100 concurrent requests:
+─────────────────────────────────────
+Each request hits DB query (100ms)
+Event loop BLOCKED for 100ms per request
+Requests queue up
+Response time degrades exponentially
+
+100 requests × 100ms = 10 seconds total 💀
+
+ASYNC under 100 concurrent requests:
+─────────────────────────────────────
+All 100 requests fire DB queries
+Event loop FREE during all 100ms waits
+All queries run concurrently in PostgreSQL
+All responses return ~100ms
+
+100 requests ≈ 100ms total 🚀
+```
+
+---
+
+### Driver Comparison
+
+```
+┌──────────────┬─────────────┬──────────────────────────┐
+│ Driver       │ Sync/Async  │ Use with                 │
+├──────────────┼─────────────┼──────────────────────────┤
+│ psycopg2     │ Sync        │ Flask, Django, sync apps │
+│ psycopg3     │ Both        │ Modern apps              │
+│ asyncpg      │ Async only  │ FastAPI async (fastest)  │
+│ aiopg        │ Async       │ Older async apps         │
+└──────────────┴─────────────┴──────────────────────────┘
+
+```
+
+---
+
+## Q34. How to Manage DB Sessions in FastAPI?
+
+The standard pattern is per-request session — one DB session created when request starts, used throughout the request lifecycle, committed or rolled back when request ends, then closed. This is implemented as a FastAPI dependency using yield.
+
+The key insight is the yield dependency acts like a context manager — code before yield is setup, your handler runs at yield, code after yield is teardown. This guarantees the session is always closed even if the handler raises an exception."*
+
+---
+
+### Per-Request Session Pattern
+
+```
+REQUEST LIFECYCLE WITH DB SESSION
+───────────────────────────────────
+
+HTTP Request arrives
+        │
+        ▼
+get_db() dependency starts
+        │
+        ▼
+Session created from pool
+        │
+        ▼
+    yield session ──────────────────┐
+        │                           │
+        │                    Handler executes
+        │                    uses session
+        │                    for DB operations
+        │                           │
+        ◄───────────────────────────┘
+        │
+        ▼
+Success? → commit()
+Error?   → rollback()
+        │
+        ▼
+Session closed → connection returned to pool
+        │
+        ▼
+HTTP Response sent
+```
+
+```python
+# dependencies.py — three patterns
+
+# ── Pattern 1: Basic (most common) ──
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        # session.close() called automatically
+        # by async context manager
+
+# ── Pattern 2: Read only session ──
+async def get_read_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+        # no commit needed for read only
+        # saves a round trip to PostgreSQL
+
+# ── Pattern 3: Transaction control in handler ──
+async def get_db_no_autocommit():
+    async with AsyncSessionLocal() as session:
+        yield session
+        # handler controls commit/rollback
+        # useful for complex multi-step transactions
+
+# Usage in handler:
+@app.post("/documents")
+async def create_document(
+    doc: DocumentCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    new_doc = Document(**doc.model_dump())
+    db.add(new_doc)
+    # commit happens automatically in get_db()
+    return new_doc
+```
+
+---
+
+### Common Session Mistakes
+
+```python
+# ❌ WRONG — session created outside dependency
+# shared across requests — race conditions!
+db = AsyncSessionLocal()
+
+@app.get("/docs")
+async def get_docs():
+    return await db.execute(select(Document))
+
+# ❌ WRONG — session not closed on error
+async def get_db():
+    session = AsyncSessionLocal()
+    yield session
+    await session.close()  # never runs if handler raises!
+
+# ✅ CORRECT — async context manager guarantees cleanup
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+```
+
+---
+
+## Q35. What is Alembic? How Do You Run Migrations?
+
+Alembic is the database migration tool for SQLAlchemy. When your data models change — new table, new column, changed type — you need to apply those changes to your production database without losing existing data. That's what Alembic does.
+
+It works by tracking a version history of your schema changes in a special table called alembic_version in your database. Each migration is a Python file with upgrade() and downgrade() functions — upgrade applies the change, downgrade reverts it.
+
+In production you never run raw ALTER TABLE SQL manually — you create Alembic migrations, test them in staging, then apply in production.
+
+---
+
+### Alembic Flow
+
+```
+Your SQLAlchemy Model Changes
+          │
+          ▼
+alembic revision --autogenerate
+          │
+          │ Alembic compares:
+          │ current models vs database schema
+          │ generates migration file automatically
+          ▼
+migrations/versions/abc123_add_score_column.py
+          │
+          ▼
+alembic upgrade head
+          │
+          │ applies migration to database
+          ▼
+Database schema updated ✅
+alembic_version table updated ✅
+```
+
+```python
+# migrations/versions/abc123_add_score_column.py
+# Auto-generated by Alembic
+
+from alembic import op
+import sqlalchemy as sa
+
+revision = 'abc123'
+down_revision = 'def456'   # previous migration
+
+def upgrade():
+    # add new column to documents table
+    op.add_column(
+        'documents',
+        sa.Column('score', sa.Float(), nullable=True)
+    )
+    # add index
+    op.create_index(
+        'ix_documents_score',
+        'documents',
+        ['score']
+    )
+
+def downgrade():
+    # reverse the change
+    op.drop_index('ix_documents_score')
+    op.drop_column('documents', 'score')
+```
+
+```bash
+# Common Alembic commands
+
+# Initial setup
+alembic init alembic
+
+# Generate migration from model changes
+alembic revision --autogenerate -m "add score column"
+
+# Apply all pending migrations
+alembic upgrade head
+
+# Apply one migration forward
+alembic upgrade +1
+
+# Rollback one migration
+alembic downgrade -1
+
+# Rollback to specific version
+alembic downgrade abc123
+
+# See current version
+alembic current
+
+# See migration history
+alembic history
+```
+
+---
+
+### Migration Version Chain
+
+```
+Database alembic_version table:
+─────────────────────────────────
+current: f3a9b2
+
+Migration chain:
+base
+ │
+ ▼
+a1b2c3 ← "create documents table"
+ │
+ ▼
+d4e5f6 ← "add embedding_id column"
+ │
+ ▼
+f3a9b2 ← "add score column" (current)
+ │
+ ▼
+new_migration ← pending, not applied yet
+
+alembic upgrade head → applies new_migration
+alembic downgrade -1 → reverts to f3a9b2
+```
+
+---
+
+## Q36. How to Connect FastAPI to MongoDB?
+
+For MongoDB in FastAPI you use Motor — the official async MongoDB driver for Python. Motor is built on top of PyMongo but fully async, so it integrates naturally with FastAPI's event loop without blocking.
+
+The pattern is similar to SQLAlchemy — create a client at startup, close it at shutdown, inject database reference via dependency. Unlike SQLAlchemy there's no ORM or session concept — you work directly with collections and documents.
+
+---
+
+### Complete Setup
+
+```python
+# database.py — Motor setup
+from motor.motor_asyncio import AsyncIOMotorClient
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+# ── Client lifecycle with lifespan ──
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP — create client once
+    app.mongodb_client = AsyncIOMotorClient(
+        "mongodb://localhost:27017",
+        maxPoolSize=10,
+        minPoolSize=2
+    )
+    app.mongodb = app.mongodb_client["ai_platform"]
+    print("MongoDB connected")
+
+    yield
+
+    # SHUTDOWN — close client
+    app.mongodb_client.close()
+    print("MongoDB disconnected")
+
+app = FastAPI(lifespan=lifespan)
+
+# ── Dependency ──
+async def get_db(request: Request):
+    return request.app.mongodb
+```
+
+```python
+# CRUD operations with Motor
+from fastapi import APIRouter, Depends
+from bson import ObjectId
+
+router = APIRouter()
+
+# ── Create ──
+@router.post("/documents")
+async def create_document(
+    doc: DocumentCreate,
+    db = Depends(get_db)
+):
+    result = await db["documents"].insert_one(
+        doc.model_dump()
+    )
+    return {"id": str(result.inserted_id)}
+
+# ── Read ──
+@router.get("/documents/{doc_id}")
+async def get_document(
+    doc_id: str,
+    db = Depends(get_db)
+):
+    doc = await db["documents"].find_one(
+        {"_id": ObjectId(doc_id)}
+    )
+    if not doc:
+        raise HTTPException(status_code=404)
+    doc["id"] = str(doc.pop("_id"))  # convert ObjectId
+    return doc
+
+# ── Search with filter ──
+@router.get("/documents")
+async def search_documents(
+    query: str,
+    limit: int = 10,
+    db = Depends(get_db)
+):
+    cursor = db["documents"].find(
+        {"$text": {"$search": query}}
+    ).limit(limit)
+
+    docs = await cursor.to_list(length=limit)
+    return docs
+```
+
+---
+
+### SQLAlchemy vs Motor
+
+```
+┌─────────────────┬──────────────────┬──────────────────┐
+│                 │   SQLAlchemy     │     Motor        │
+├─────────────────┼──────────────────┼──────────────────┤
+│ Database        │ PostgreSQL/MySQL │ MongoDB          │
+│ Data model      │ ORM (classes)    │ Raw dicts/docs   │
+│ Schema          │ Strict           │ Flexible         │
+│ Sessions        │ Yes              │ No               │
+│ Transactions    │ Full ACID        │ Limited          │
+│ Migrations      │ Alembic          │ Manual/scripts   │
+│ Query language  │ SQLAlchemy ORM   │ MongoDB query    │
+│ Best for        │ Structured data  │ Flexible/nested  │
+└─────────────────┴──────────────────┴──────────────────┘
+```
+
+---
+
+## Q37. How to Implement Pagination in FastAPI?
+
+Pagination is essential for any endpoint returning lists — you never return all records at once. 
+There are two main approaches — offset pagination which is simple but has performance issues at scale, and cursor based pagination which is efficient even for millions of records.
+
+Offset pagination uses LIMIT and OFFSET in SQL — skip N records, take M. Simple to implement but slow for large offsets because PostgreSQL still scans all skipped rows. Cursor pagination uses a pointer to the last seen record — much faster for deep pages.
+
+---
+
+### Offset Pagination
+
+```python
+from fastapi import Query
+from pydantic import BaseModel
+from typing import List, Generic, TypeVar
+
+T = TypeVar("T")
+
+# ── Reusable pagination response ──
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+
+# ── Reusable pagination params ──
+class PaginationParams:
+    def __init__(
+        self,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100)
+    ):
+        self.page = page
+        self.page_size = page_size
+        self.offset = (page - 1) * page_size
+
+@app.get("/documents", response_model=PaginatedResponse[DocumentOut])
+async def list_documents(
+    pagination: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db)
+):
+    # ── Count total ──
+    count_result = await db.execute(
+        select(func.count(Document.id))
+    )
+    total = count_result.scalar()
+
+    # ── Fetch page ──
+    result = await db.execute(
+        select(Document)
+        .offset(pagination.offset)
+        .limit(pagination.page_size)
+        .order_by(Document.created_at.desc())
+    )
+    documents = result.scalars().all()
+
+    return PaginatedResponse(
+        items=documents,
+        total=total,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        total_pages=ceil(total / pagination.page_size),
+        has_next=pagination.page * pagination.page_size < total,
+        has_previous=pagination.page > 1
+    )
+
+# URL: /documents?page=2&page_size=20
+```
+
+---
+
+### Cursor Pagination — For Scale
+
+```python
+# More efficient for large datasets
+# Uses last seen ID as cursor instead of offset
+
+@app.get("/documents/stream")
+async def list_documents_cursor(
+    cursor: Optional[int] = Query(default=None),
+    limit: int = Query(default=20, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Document).order_by(Document.id.asc())
+
+    if cursor:
+        # start AFTER the cursor ID
+        query = query.where(Document.id > cursor)
+
+    query = query.limit(limit + 1)  # fetch one extra
+    result = await db.execute(query)
+    docs = result.scalars().all()
+
+    # check if there's a next page
+    has_next = len(docs) > limit
+    if has_next:
+        docs = docs[:limit]  # remove the extra one
+
+    next_cursor = docs[-1].id if has_next else None
+
+    return {
+        "items": docs,
+        "next_cursor": next_cursor,
+        "has_next": has_next
+    }
+
+# First page:  /documents/stream
+# Next page:   /documents/stream?cursor=20
+# Next page:   /documents/stream?cursor=40
+```
+
+---
+
+### Offset vs Cursor
+
+```
+┌─────────────────┬──────────────────┬──────────────────┐
+│                 │ Offset Pagination│ Cursor Pagination│
+├─────────────────┼──────────────────┼──────────────────┤
+│ Implementation  │ Simple           │ Moderate         │
+│ Performance     │ Slow at depth    │ Fast always      │
+│ Deep pages      │ O(offset+limit)  │ O(limit)         │
+│ Random access   │ ✅ any page      │ ❌ sequential    │
+│ New items issue │ Items can shift  │ Stable           │
+│ Best for        │ Admin panels     │ Feeds, APIs      │
+│                 │ Small datasets   │ Large datasets   │
+└─────────────────┴──────────────────┴──────────────────┘
+```
+
+---
+
+## Q38. What is the N+1 Problem? How to Avoid It?
+
+N+1 is one of the most common and damaging performance bugs in ORM-based applications. 
+It happens when you fetch a list of N records and then make an additional query for each record to fetch related data — resulting in 1 query for the list plus N queries for the relations, total N+1 queries.
+
+For example fetch 100 documents and their authors — naively that's 101 queries. With eager loading using `joinedload` or `selectinload` it's 1 or 2 queries total. At scale N+1 can turn a 10ms endpoint into a 10 second one.
+
+---
+
+### N+1 Visualized
+
+```
+# Documents table          # Authors table
+# ───────────────          # ──────────────
+# id | title               # id | name
+# 1  | "RAG intro"         # 1  | "Raj"
+# 2  | "FastAPI guide"     # 2  | "Priya"
+# 3  | "Python tips"       # 3  | "Amit"
+
+# ❌ N+1 Problem
+───────────────────────────────────────────
+
+Query 1: SELECT * FROM documents
+# returns 3 documents
+
+Query 2: SELECT * FROM authors WHERE id=1  ← for doc 1
+Query 3: SELECT * FROM authors WHERE id=2  ← for doc 2
+Query 4: SELECT * FROM authors WHERE id=3  ← for doc 3
+
+Total: 4 queries for 3 documents 💀
+For 1000 documents = 1001 queries 💀💀💀
+```
+
+---
+
+### Solutions
+
+```python
+from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy import select
+
+# ── Solution 1: joinedload (SQL JOIN) ──
+# Best for many-to-one (document → author)
+# Single query with JOIN
+
+result = await db.execute(
+    select(Document)
+    .options(joinedload(Document.author))
+    # SELECT documents.*, authors.*
+    # FROM documents
+    # LEFT JOIN authors ON documents.author_id = authors.id
+)
+docs = result.unique().scalars().all()
+# 1 query total ✅
+
+
+# ── Solution 2: selectinload (IN clause) ──
+# Best for one-to-many (author → documents)
+# 2 queries but avoids JOIN duplication
+
+result = await db.execute(
+    select(Author)
+    .options(selectinload(Author.documents))
+    # Query 1: SELECT * FROM authors
+    # Query 2: SELECT * FROM documents
+    #          WHERE author_id IN (1, 2, 3)
+)
+authors = result.scalars().all()
+# 2 queries total ✅ much better than N+1
+
+
+# ── Solution 3: Explicit JOIN for filtering ──
+result = await db.execute(
+    select(Document, Author)
+    .join(Author, Document.author_id == Author.id)
+    .where(Author.name == "Raj")
+)
+
+
+# ── Solution 4: contains_eager ──
+# When you write the JOIN yourself
+from sqlalchemy.orm import contains_eager
+
+result = await db.execute(
+    select(Document)
+    .join(Document.author)
+    .options(contains_eager(Document.author))
+    .where(Author.active == True)
+)
+```
+
+---
+
+### Detecting N+1
+
+```python
+# Development — enable SQL logging
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=True  # logs every SQL query
+)
+
+# What you see with N+1:
+# INFO: SELECT * FROM documents
+# INFO: SELECT * FROM authors WHERE id=1
+# INFO: SELECT * FROM authors WHERE id=2
+# ... 100 more lines 💀
+
+# What you see with eager loading:
+# INFO: SELECT documents.*, authors.*
+#       FROM documents
+#       LEFT JOIN authors... ✅
+```
+
+---
+
+### Quick Decision Guide
+
+```
+What relationship?
+        │
+        ├── Many-to-one (doc → author)
+        │   One foreign key on your table
+        │           │
+        │           ▼
+        │       joinedload ✅
+        │
+        ├── One-to-many (author → docs)
+        │   Many records on other table
+        │           │
+        │           ▼
+        │       selectinload ✅
+        │       (avoids row duplication)
+        │
+        └── Need to filter by relation?
+                    │
+                    ▼
+                explicit join ✅
+```
+
+---
 ## 🔴 AUTHENTICATION & SECURITY (26–31)
 
 26. How do you implement JWT authentication in FastAPI?
