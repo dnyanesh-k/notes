@@ -1072,10 +1072,763 @@ Your Python Code (.py)
 > *"It submits a blocking function to a threadpool and returns an awaitable — so the event loop can continue serving other requests while the thread runs the blocking code."*
 
 ---
-7. How do you define path parameters and query parameters in FastAPI?
-8. What is the request lifecycle in FastAPI?
-9. How do you run a FastAPI app in production? (Uvicorn + Gunicorn)
-10. What are the advantages of FastAPI over Flask for AI/ML applications?
+## Q7. Path Parameters and Query Parameters in FastAPI
+
+In FastAPI, path parameters and query parameters are defined purely through function signature — no decorators or extra config needed.
+
+Path parameters are part of the URL itself — you define them in the route path with curly braces and FastAPI automatically maps them to function arguments with the same name. Type hints handle validation — if you say `id: int` and someone passes a string, FastAPI returns a 422 automatically.
+
+Query parameters are everything after the `?` in the URL — you define them as function arguments that are NOT in the path. If they have a default value they're optional, if they don't they're required.
+
+FastAPI figures out which is which purely by comparing function argument names against the path string — if the name is in the path it's a path parameter, if it's not it's a query parameter. No extra annotation needed for basic cases.
+---
+
+### Path Parameters
+
+```python
+# Basic path parameter
+@app.get("/users/{user_id}")
+async def get_user(user_id: int):
+    # URL: /users/123
+    # user_id = 123 (auto converted to int)
+    # /users/abc → 422 Unprocessable Entity
+    return {"user_id": user_id}
+
+# Multiple path parameters
+@app.get("/pipelines/{pipeline_id}/documents/{doc_id}")
+async def get_document(pipeline_id: str, doc_id: int):
+    # URL: /pipelines/rag-v1/documents/42
+    # pipeline_id = "rag-v1"
+    # doc_id = 42
+    return {"pipeline": pipeline_id, "doc": doc_id}
+
+# Path parameter with validation
+from fastapi import Path
+
+@app.get("/users/{user_id}")
+async def get_user(
+    user_id: int = Path(
+        ...,           # required
+        gt=0,          # greater than 0
+        le=1000,       # less than or equal 1000
+        description="User ID must be positive"
+    )
+):
+    return {"user_id": user_id}
+```
+
+---
+
+### Query Parameters
+
+```python
+# Basic query parameter
+@app.get("/search")
+async def search(query: str):
+    # URL: /search?query=hello
+    # query = "hello"
+    # /search → 422 (required, no default)
+    return {"query": query}
+
+# Optional query parameter with default
+@app.get("/search")
+async def search(
+    query: str,
+    top_k: int = 5,          # optional, default 5
+    threshold: float = 0.7,  # optional, default 0.7
+):
+    # URL: /search?query=hello
+    # URL: /search?query=hello&top_k=10&threshold=0.8
+    return {"query": query, "top_k": top_k}
+
+# Optional that can be None
+from typing import Optional
+
+@app.get("/search")
+async def search(
+    query: str,
+    filter: Optional[str] = None  # truly optional
+):
+    # URL: /search?query=hello
+    # filter = None if not provided
+    return {"query": query, "filter": filter}
+
+# Query parameter with validation
+from fastapi import Query
+
+@app.get("/search")
+async def search(
+    query: str = Query(
+        ...,           # required
+        min_length=3,  # minimum 3 chars
+        max_length=100,
+        description="Search query"
+    ),
+    top_k: int = Query(
+        default=5,
+        ge=1,          # greater or equal 1
+        le=20          # less or equal 20
+    )
+):
+    return {"query": query, "top_k": top_k}
+```
+
+---
+
+### How FastAPI Decides Which is Which
+
+```
+@app.get("/pipelines/{pipeline_id}/search")
+async def search(
+    pipeline_id: str,    ← in path → PATH PARAMETER
+    query: str,          ← not in path → QUERY PARAMETER
+    top_k: int = 5,      ← not in path → QUERY PARAMETER
+    db = Depends(get_db) ← Depends → DEPENDENCY
+):
+
+FastAPI logic at startup:
+──────────────────────────────────────
+1. parse route path → find {pipeline_id}
+2. scan function arguments
+3. pipeline_id in path? → YES → path param
+4. query in path?       → NO  → query param
+5. top_k in path?       → NO  → query param
+6. has Depends?         → YES → dependency
+```
+
+---
+
+### Path vs Query — When to Use Which
+
+```
+┌─────────────────┬─────────────────────────────────────┐
+│  PATH PARAMETER │  QUERY PARAMETER                     │
+├─────────────────┼─────────────────────────────────────┤
+│ Identifies a    │ Filters, options, pagination        │
+│ specific        │                                     │
+│ resource        │                                     │
+├─────────────────┼─────────────────────────────────────┤
+│ /users/123      │ /users?role=admin&page=2            │
+│ /docs/abc       │ /search?q=hello&top_k=5             │
+│ /pipeline/rag   │ /items?sort=price&order=asc         │
+├─────────────────┼─────────────────────────────────────┤
+│ Always required │ Can be optional with defaults       │
+├─────────────────┼─────────────────────────────────────┤
+│ Part of         │ After ? in URL                      │
+│ URL structure   │                                     │
+└─────────────────┴─────────────────────────────────────┘
+```
+
+---
+
+### Common Mistake — List as Query Parameter
+
+```python
+# Receiving multiple values for same key
+# URL: /search?tags=python&tags=fastapi&tags=ai
+
+from typing import List
+
+@app.get("/search")
+async def search(
+    tags: List[str] = Query(default=[])
+):
+    # tags = ["python", "fastapi", "ai"]
+    return {"tags": tags}
+
+# Without Query() wrapper
+# tags: List[str] = []  ← WONT WORK for query params
+# Must use Query() for list query params
+```
+
+---
+
+### Follow-up They Might Ask
+
+*"What's the difference between Path() and just type hint?"*
+> *"Type hint alone handles basic type validation and required/optional. Path() and Query() give you additional constraints like min/max values, string length limits, regex patterns, and custom descriptions that appear in Swagger docs."*
+
+*"What happens if path parameter type doesn't match?"*
+> *"FastAPI automatically returns 422 Unprocessable Entity with a detailed error message showing exactly which field failed and why — this is handled by Pydantic internally."*
+
+*"Can query parameters be complex types like dict or list?"*
+> *"Lists yes — using `Query()` wrapper. Dicts no — for complex nested input you should use a request body with a Pydantic model instead."*
+
+---
+## Q8. What is the Request Lifecycle in FastAPI?
+The request lifecycle in FastAPI is the complete journey of a request from the moment it hits the server to the moment the response goes back — passing through multiple layers each with a specific job.
+
+- It starts at Uvicorn which receives raw TCP bytes and translates them into ASGI format. 
+- Then middleware runs — every registered middleware executes in order before the request reaches your route. 
+- Then FastAPI's dependency injection resolves all dependencies. 
+- Then Pydantic validates the request data. 
+- Then your actual route handler executes. 
+- Then the response model serializes the output. 
+- Then middleware runs again on the way out. 
+- Finally Uvicorn converts back to HTTP and sends to client.
+
+The important thing to understand is middleware wraps the entire request like an onion — outermost middleware runs first on the way in and last on the way out. Dependencies run per-request just before the handler. And response_model validation happens after your handler returns — so you can return more data than the model exposes, Pydantic will strip the extra fields.
+
+### Complete Request Lifecycle
+
+```
+CLIENT sends HTTP Request
+         │
+         ▼
+┌─────────────────────────────────────┐
+│         UVICORN                      │
+│                                      │
+│  • Receives raw TCP bytes           │
+│  • Parses HTTP using httptools      │
+│  • Builds ASGI scope dict           │
+│  • Calls FastAPI with               │
+│    (scope, receive, send)           │
+└──────────────────┬──────────────────┘
+                   │ ASGI scope
+                   ▼
+┌─────────────────────────────────────┐
+│      MIDDLEWARE LAYER (IN)           │
+│                                      │
+│  Middleware 1 (outermost)           │
+│  └── Middleware 2                   │
+│      └── Middleware 3 (innermost)   │
+│                                      │
+│  Each middleware can:               │
+│  • Read/modify request              │
+│  • Add headers                      │
+│  • Log request                      │
+│  • Short circuit (return early)     │
+│  • Pass to next via call_next()     │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│         ROUTING                      │
+│                                      │
+│  FastAPI matches:                   │
+│  • HTTP method (GET/POST/etc)       │
+│  • URL path pattern                 │
+│  • Finds the right route handler    │
+│                                      │
+│  No match → 404 Not Found           │
+│  Wrong method → 405 Not Allowed     │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│      DEPENDENCY INJECTION            │
+│                                      │
+│  FastAPI resolves dependency tree   │
+│  bottom up:                         │
+│                                      │
+│  get_db() → get_current_user()      │
+│          → get_permissions()        │
+│                                      │
+│  All dependencies execute BEFORE    │
+│  your handler runs                  │
+│                                      │
+│  Dependency fails → handler never   │
+│  executes, error returned           │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│      REQUEST VALIDATION              │
+│         (Pydantic)                   │
+│                                      │
+│  • Path parameters validated        │
+│  • Query parameters validated       │
+│  • Request body parsed + validated  │
+│  • Type coercion applied            │
+│                                      │
+│  Validation fails → 422             │
+│  Unprocessable Entity               │
+│  Handler never executes             │
+└──────────────────┬──────────────────┘
+                   │ clean validated data
+                   ▼
+┌─────────────────────────────────────┐
+│      YOUR ROUTE HANDLER              │
+│                                      │
+│  @app.post("/search")               │
+│  async def search(                  │
+│      query: SearchRequest,          │
+│      db = Depends(get_db),          │
+│      user = Depends(get_user)       │
+│  ):                                 │
+│      result = await db.query()      │
+│      return result                  │
+│                                      │
+│  Your actual business logic runs    │
+└──────────────────┬──────────────────┘
+                   │ raw return value
+                   ▼
+┌─────────────────────────────────────┐
+│      RESPONSE MODEL VALIDATION       │
+│         (Pydantic)                   │
+│                                      │
+│  If response_model defined:         │
+│  • Filters fields not in model      │
+│  • Validates output types           │
+│  • Serializes to JSON               │
+│                                      │
+│  Extra fields stripped              │
+│  Missing required fields → 500      │
+└──────────────────┬──────────────────┘
+                   │ clean response
+                   ▼
+┌─────────────────────────────────────┐
+│      MIDDLEWARE LAYER (OUT)          │
+│                                      │
+│  Same middleware runs in reverse:   │
+│                                      │
+│  Middleware 3 (innermost first)     │
+│  └── Middleware 2                   │
+│      └── Middleware 1 (outermost)   │
+│                                      │
+│  Each middleware can:               │
+│  • Modify response                  │
+│  • Add response headers             │
+│  • Log response time                │
+│  • Handle errors                    │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│         UVICORN                      │
+│                                      │
+│  • Receives response from FastAPI   │
+│  • Converts to raw HTTP bytes       │
+│  • Sends back to client over TCP    │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+            CLIENT gets response
+```
+
+---
+
+### Middleware — Onion Model
+
+```
+REQUEST IN                    RESPONSE OUT
+──────────►                  ◄──────────
+                                        
+  ┌─────────────────────────────────┐   
+  │  Middleware 1 (Logging)         │   
+  │  ┌─────────────────────────┐   │   
+  │  │  Middleware 2 (Auth)    │   │   
+  │  │  ┌───────────────────┐  │   │   
+  │  │  │  Middleware 3     │  │   │   
+  │  │  │  (CORS)           │  │   │   
+  │  │  │  ┌─────────────┐  │  │   │   
+  │  │  │  │  YOUR ROUTE │  │  │   │   
+  │  │  │  │  HANDLER    │  │  │   │   
+  │  │  │  └─────────────┘  │  │   │   
+  │  │  └───────────────────┘  │   │   
+  │  └─────────────────────────┘   │   
+  └─────────────────────────────────┘   
+
+Request travels INWARD through layers
+Response travels OUTWARD through layers
+```
+
+---
+
+### Lifecycle Timing — Real Numbers
+
+```
+Total request time breakdown
+for a typical AI API endpoint:
+
+Uvicorn parse          ~0.1ms
+Middleware (in)        ~1-2ms   (logging, auth check)
+Routing                ~0.1ms
+Dependency injection   ~1-5ms   (DB session, user lookup)
+Pydantic validation    ~0.5ms   (Rust speed)
+Your handler           ~200-500ms (DB + LLM calls)
+Response model         ~0.5ms
+Middleware (out)       ~0.5ms   (add headers, log)
+Uvicorn serialize      ~0.1ms
+──────────────────────────────
+Total                  ~205-515ms
+
+Your handler dominates
+Everything else is negligible
+```
+
+---
+
+### Exception Handling in Lifecycle
+
+```
+Exception raised anywhere
+         │
+         ├── HTTPException
+         │         │
+         │         ▼
+         │   FastAPI catches it
+         │   Returns proper HTTP response
+         │   (404, 401, 422 etc)
+         │   Middleware OUT still runs
+         │
+         └── Unhandled Exception
+                   │
+                   ▼
+             FastAPI catches it
+             Returns 500 Internal Server Error
+             Middleware OUT still runs
+             Your exception handler fires
+             if registered
+```
+
+---
+
+### Code — Seeing the Lifecycle
+
+```python
+import time
+from fastapi import FastAPI, Request
+
+app = FastAPI()
+
+# Middleware — wraps everything
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    start = time.time()
+    
+    # BEFORE handler (request in)
+    print(f"Request: {request.method} {request.url}")
+    
+    response = await call_next(request)  # entire lifecycle runs here
+    
+    # AFTER handler (response out)
+    duration = time.time() - start
+    print(f"Completed in {duration:.3f}s")
+    response.headers["X-Process-Time"] = str(duration)
+    
+    return response
+
+# Dependency — runs just before handler
+async def get_db():
+    db = SessionLocal()
+    try:
+        yield db        # handler runs here
+    finally:
+        db.close()      # cleanup after handler
+
+# Handler — your business logic
+@app.post("/search", response_model=SearchResponse)
+async def search(
+    query: SearchRequest,        # validated by Pydantic
+    db = Depends(get_db),        # injected dependency
+    user = Depends(get_user)     # injected dependency
+):
+    result = await db.execute()
+    return result                # filtered by response_model
+```
+
+---
+
+### Follow-up They Might Ask
+
+*"What is the difference between middleware and dependency?"*
+> *"Middleware wraps every request regardless of route — good for cross cutting concerns like logging, CORS, auth token extraction. Dependencies are per-route and per-handler — good for route specific logic like DB sessions, user authorization, feature flags."*
+
+*"When does Pydantic validation happen exactly?"*
+> *"After routing and dependency injection but before your handler executes. If validation fails, your handler never runs — FastAPI returns 422 immediately with detailed field errors."*
+
+*"Can middleware short circuit the request?"*
+> *"Yes — if you return a response without calling call_next(), the request never reaches your handler. Used for things like blocking banned IPs or returning cached responses."*
+---
+## Q9. How to Run FastAPI in Production?
+Running FastAPI in production involves multiple layers — you don't just run uvicorn directly like in development. The standard production setup depends on your deployment target — bare metal/VM, Docker, or Kubernetes.
+
+The core is always Gunicorn as process manager with Uvicorn workers. Gunicorn handles process lifecycle, crash recovery, and graceful restarts while each Uvicorn worker runs its own async event loop serving concurrent requests. In front of that you put Nginx as reverse proxy handling SSL termination, static files, and connection management.
+
+In containerized environments like Docker or Kubernetes, the setup changes slightly — you typically run one Uvicorn process per container and let the orchestrator handle scaling and restarts instead of Gunicorn.
+
+---
+
+### Development vs Production
+
+```
+DEVELOPMENT                    PRODUCTION
+───────────────                ──────────────────────
+
+uvicorn main:app               Nginx
+  --reload                       +
+  --port 8000                  Gunicorn
+                                 +
+Single process                 Uvicorn Workers
+Auto reload on                   +
+file change                    FastAPI
+No SSL
+No process mgmt
+Not scalable
+```
+
+---
+
+### Option 1 — Bare Metal / VM
+
+```
+┌─────────────────────────────────────┐
+│              NGINX                   │
+│                                      │
+│  server {                           │
+│    listen 443 ssl;                  │
+│    server_name myapp.com;           │
+│                                      │
+│    location / {                     │
+│      proxy_pass http://127.0.0.1:8000│
+│    }                                │
+│  }                                  │
+└──────────────────┬──────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────┐
+│     GUNICORN + UVICORN WORKERS       │
+│                                      │
+│  gunicorn main:app \                │
+│    --workers 4 \                    │
+│    --worker-class \                 │
+│    uvicorn.workers.UvicornWorker \  │
+│    --bind 0.0.0.0:8000 \           │
+│    --timeout 120 \                  │
+│    --keepalive 5 \                  │
+│    --max-requests 1000 \            │
+│    --max-requests-jitter 100        │
+└─────────────────────────────────────┘
+```
+
+---
+
+### Option 2 — Docker
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+
+# Production command
+CMD ["gunicorn", "main:app",
+     "--workers", "4",
+     "--worker-class", "uvicorn.workers.UvicornWorker",
+     "--bind", "0.0.0.0:8000",
+     "--timeout", "120"]
+```
+
+```yaml
+# docker-compose.yml
+version: "3.8"
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://...
+      - REDIS_URL=redis://...
+    deploy:
+      replicas: 3          # 3 containers
+      resources:
+        limits:
+          memory: 512M
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - app
+```
+
+---
+
+### Option 3 — Kubernetes (Modern Preferred)
+
+```yaml
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-app
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: fastapi
+        image: myapp:latest
+        command: ["uvicorn"]      # single uvicorn per pod
+        args:
+          - "main:app"
+          - "--host=0.0.0.0"
+          - "--port=8000"
+          - "--workers=1"         # K8s handles scaling
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:            # K8s health check
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:           # ready to serve traffic?
+          httpGet:
+            path: /health
+            port: 8000
+
+---
+# hpa.yaml — auto scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi-hpa
+spec:
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        averageUtilization: 70   # scale when CPU > 70%
+```
+
+---
+
+### Important Production Config
+
+```python
+# main.py — production ready FastAPI
+
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+# startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP
+    await db.connect()
+    await redis.connect()
+    load_ml_models()        # load AI models once at startup
+    print("App started")
+    
+    yield                   # app runs here
+    
+    # SHUTDOWN
+    await db.disconnect()
+    await redis.close()
+    print("App shutting down")
+
+app = FastAPI(
+    title="AI Search API",
+    lifespan=lifespan,
+    docs_url=None,          # disable swagger in production
+    redoc_url=None,         # disable redoc in production
+)
+
+# health check endpoint — required for K8s probes
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+```
+
+---
+
+### Key Production Settings
+
+```bash
+# Gunicorn config file — gunicorn.conf.py
+workers = 4                    # (2 x CPU) + 1
+worker_class = "uvicorn.workers.UvicornWorker"
+bind = "0.0.0.0:8000"
+timeout = 120                  # worker timeout seconds
+keepalive = 5                  # keep connection alive
+max_requests = 1000            # restart worker after N requests
+max_requests_jitter = 100      # add randomness to avoid
+                               # all workers restarting together
+worker_tmp_dir = "/dev/shm"    # use RAM for temp files, faster
+accesslog = "-"                # log to stdout
+errorlog = "-"                 # log to stdout
+loglevel = "info"
+```
+
+---
+
+### Why max_requests Matters
+
+```
+Without max_requests:
+──────────────────────
+Worker runs forever
+Memory leaks accumulate
+After 10k requests →
+worker using 2GB RAM 💀
+
+With max_requests = 1000:
+──────────────────────────
+Worker handles 1000 requests
+Gracefully restarts itself
+Fresh memory state
+No memory leak buildup ✅
+
+max_requests_jitter = 100:
+──────────────────────────
+Workers restart at:
+  Worker 1 → after 1000-1100 requests
+  Worker 2 → after 1000-1100 requests
+  Worker 3 → after 1000-1100 requests
+  
+Staggered → never all restart simultaneously
+No traffic spike during restart ✅
+```
+
+---
+
+### Deployment Comparison
+
+```
+┌──────────────┬───────────┬───────────┬───────────┐
+│              │  Bare VM  │  Docker   │    K8s    │
+├──────────────┼───────────┼───────────┼───────────┤
+│ Scaling      │ Manual    │ Manual    │ Automatic │
+│ Recovery     │ Manual    │ Limited   │ Automatic │
+│ SSL          │ Nginx     │ Nginx     │ Ingress   │
+│ Gunicorn     │ Yes       │ Yes       │ Optional  │
+│ Complexity   │ Low       │ Medium    │ High      │
+│ Best for     │ Simple    │ Dev/Small │ Production│
+│              │ apps      │ teams     │ at scale  │
+└──────────────┴───────────┴───────────┴───────────┘
+```
+---
+### Follow-up They Might Ask
+
+*"Why disable Swagger in production?"*
+> *"Security — Swagger exposes your entire API surface, parameter types, and sometimes internal field names. In production you don't want attackers having a detailed map of your API. Disable with `docs_url=None`."*
+
+*"What is a liveness vs readiness probe in K8s?"*
+> *"Liveness probe checks if the app is alive — if it fails K8s restarts the pod. Readiness probe checks if the app is ready to serve traffic — if it fails K8s removes the pod from load balancer rotation but doesn't restart it. Important distinction for AI apps that need time to load ML models at startup."*
+
+*"How do you do zero downtime deployment?"*
+> *"In K8s — rolling updates replace pods gradually, new pod must pass readiness probe before old pod is killed. In bare metal — Gunicorn supports graceful reload with `kill -HUP <pid>` which spawns new workers before killing old ones."*
+
 
 ---
 
