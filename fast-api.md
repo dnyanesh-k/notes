@@ -695,6 +695,383 @@ Good when:
 > *"Standard formula is 2 x CPU cores + 1. But for AI applications with heavy I/O waits like LLM calls, you can push more workers since they spend most time waiting not computing."*
 
 ---
+## Q6. Difference Between `async def` and `def` in FastAPI
+---
+In FastAPI both `async def` and `def` work for route handlers but FastAPI treats them completely differently internally.
+
+When you define a route with `async def`, FastAPI runs it directly on the event loop. The handler can use `await` for I/O operations — DB calls, external APIs, LLM calls — without blocking the event loop. Other requests get served while this one waits.
+
+When you define a route with `def`, FastAPI assumes it's a blocking/CPU-bound operation and automatically runs it in a threadpool executor — separate threads outside the event loop — so it doesn't block other async requests. FastAPI does this automatically, you don't configure anything.
+
+The dangerous mistake is using `def` with blocking I/O like a synchronous DB call — FastAPI runs it in threadpool which has limited threads, so under high load you exhaust the threadpool and requests start queuing. The other dangerous mistake is using `async def` with blocking code like `time.sleep()` or a sync DB driver — this blocks the event loop entirely and freezes ALL requests.
+
+At CitiusTech all our retrieval pipeline endpoints were `async def` because we were hitting vector DB, PostgreSQL, and LLM APIs — pure I/O bound operations. The only `def` handlers we had were for CPU-heavy data transformation tasks.
+
+---
+
+### How FastAPI Handles Each Internally
+
+```
+REQUEST COMES IN
+       │
+       ▼
+FastAPI checks route handler type
+       │
+       ├─────────────────────────────────────────┐
+       │                                         │
+       ▼                                         ▼
+  async def handler                         def handler
+       │                                         │
+       ▼                                         ▼
+Runs directly on                    FastAPI calls
+event loop                          run_in_executor()
+       │                                         │
+       ▼                                         ▼
+await pauses handler          Runs in ThreadPoolExecutor
+event loop serves             (separate thread)
+other requests                event loop not blocked
+meanwhile                              │
+       │                               ▼
+       ▼                     Thread completes
+handler resumes                        │
+       │                               ▼
+       ▼                     Result returned to
+response sent                  event loop
+```
+---
+
+### The 4 Combinations — What's Safe and What's Not
+
+```
+┌─────────────────┬──────────────┬───────────────────────────┐
+│   Handler Type  │  Code Inside │      Result               │
+├─────────────────┼──────────────┼───────────────────────────┤
+│                 │  await DB    │                           │
+│   async def     │  await API   │  ✅ PERFECT               │
+│                 │  await LLM   │  Event loop free          │
+├─────────────────┼──────────────┼───────────────────────────┤
+│                 │  time.sleep()│                           │
+│   async def     │  sync DB     │  💀 DANGEROUS             │
+│                 │  requests.get│  Blocks entire event loop │
+│                 │              │  ALL requests freeze      │
+├─────────────────┼──────────────┼───────────────────────────┤
+│                 │  CPU heavy   │                           │
+│     def         │  computation │  ✅ CORRECT USE           │
+│                 │  sync libs   │  Runs in threadpool       │
+│                 │              │  Event loop stays free    │
+├─────────────────┼──────────────┼───────────────────────────┤
+│                 │  await DB    │                           │
+│     def         │  await API   │  ❌ WRONG                 │
+│                 │              │  Can't use await in       │
+│                 │              │  regular def              │
+└─────────────────┴──────────────┴───────────────────────────┘
+```
+
+---
+
+### Real Code Example
+
+```python
+# ✅ CORRECT — async def with async I/O
+@app.get("/search")
+async def search(query: str, db: AsyncSession = Depends(get_db)):
+    # await is non-blocking
+    # event loop serves other requests while waiting
+    results = await db.execute(select(Document).filter(...))
+    response = await llm_client.complete(query)
+    return response
+
+# ✅ CORRECT — def for CPU bound work
+@app.post("/process")
+def process_data(data: HeavyData):
+    # CPU heavy — runs in threadpool automatically
+    # doesn't block event loop
+    result = heavy_numpy_computation(data)
+    return result
+
+# 💀 DANGEROUS — async def with blocking I/O
+@app.get("/bad")
+async def bad_handler():
+    # blocks entire event loop
+    # ALL other requests freeze until this completes
+    time.sleep(5)
+    response = requests.get("https://api.example.com")
+    return response
+
+# ✅ CORRECT — if you must use sync library in async context
+@app.get("/correct")
+async def correct_handler():
+    # run blocking code in threadpool manually
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        blocking_function
+    )
+    return result
+```
+
+---
+
+### ThreadPool in FastAPI — Important Detail
+
+```
+FastAPI's ThreadPool for def handlers
+──────────────────────────────────────
+Default size → 40 threads (Python default)
+
+Under normal load:
+Request → free thread available → runs immediately ✅
+
+Under high load with slow def handlers:
+Request 1  → Thread 1 (slow DB call, 2 seconds)
+Request 2  → Thread 2 (slow DB call, 2 seconds)
+...
+Request 40 → Thread 40 (slow DB call, 2 seconds)
+Request 41 → ⏳ WAITING — no free threads
+Request 42 → ⏳ WAITING
+...
+💀 Threadpool exhausted — requests queuing up
+
+Solution → use async def + async DB driver instead
+```
+
+---
+
+### Key Decision Rule
+
+```
+What does my handler do?
+         │
+         ├── Calls DB / API / LLM / File I/O?
+         │          │
+         │          ▼
+         │     Use async def
+         │     + async libraries
+         │     (asyncpg, httpx, aiofiles)
+         │
+         └── CPU heavy computation?
+                    │
+                    ▼
+               Use def
+               FastAPI runs it
+               in threadpool
+               automatically
+```
+```
+Event Loop is a single infinite loop
+that keeps checking:
+"is any task ready to continue?"
+
+┌─────────────────────────────────────┐
+│           EVENT LOOP                 │
+│                                      │
+│  while True:                         │
+│      tasks = get_ready_tasks()       │
+│      for task in tasks:              │
+│          task.run_until_next_await() │
+│                                      │
+└─────────────────────────────────────┘
+
+Single thread. Single loop.
+Runs one thing at a time.
+But switches between tasks extremely fast.
+```
+What Happens Step by Step
+```
+@app.get("/search")
+async def search():
+    result = await db.query()    # line 2
+    response = await llm.call() # line 3
+    return response              # line 4
+```
+```
+STEP 1 — Request arrives
+──────────────────────────────────────
+Event loop creates a Task for search()
+Starts executing search() 
+Runs normally until it hits await
+
+STEP 2 — Hits await db.query()
+──────────────────────────────────────
+await tells event loop:
+"I'm waiting for DB response
+ go do something else
+ come back when DB responds"
+
+FastAPI saves entire state of search():
+  • local variables
+  • current line number (line 2)
+  • call stack
+
+This saved state = COROUTINE OBJECT
+Coroutine gets SUSPENDED here
+
+STEP 3 — Event loop is free
+──────────────────────────────────────
+Event loop picks up OTHER waiting tasks
+
+  Task 2 (another request) → runs
+  Task 3 (another request) → runs
+  Task 4 (another request) → runs
+
+Meanwhile DB is processing query
+in background (OS/network handles it)
+
+STEP 4 — DB responds
+──────────────────────────────────────
+OS signals event loop:
+"hey DB responded for search() task"
+
+Event loop marks search() task
+as READY TO RESUME
+
+STEP 5 — search() resumes
+──────────────────────────────────────
+Event loop picks up search() task
+RESTORES exact saved state:
+  • all local variables intact
+  • resumes from LINE 2 exactly
+    where it left off
+
+result = db response  ← assigned here
+
+Continues to line 3
+hits await llm.call()
+SUSPENDS again → same cycle repeats
+
+STEP 6 — llm responds
+──────────────────────────────────────
+Same as step 4
+Event loop marks task ready
+Resumes from line 3
+response = llm response
+
+STEP 7 — return response
+──────────────────────────────────────
+No more awaits
+Runs to completion
+Returns response to Uvicorn
+Uvicorn sends to client
+Task is destroyed
+```
+---
+```
+Your FastAPI app is a process
+running on the OS
+
+When you await db.query():
+
+STEP 1 — Python makes a syscall
+──────────────────────────────────────
+Python tells OS:
+"open a TCP connection to PostgreSQL
+ send this SQL query
+ DON'T block me
+ notify me when response arrives"
+
+This is called NON-BLOCKING I/O syscall
+(specifically epoll on Linux)
+
+STEP 2 — OS takes over
+──────────────────────────────────────
+OS handles the network communication
+completely independently:
+
+  OS → TCP packet → Network → PostgreSQL
+                               │
+                               │ executes query
+                               │
+  OS ← TCP packet ← Network ← PostgreSQL
+
+Your Python process does NOTHING here
+OS is doing all the work
+Your event loop is free to run other tasks
+
+STEP 3 — OS gets response
+──────────────────────────────────────
+PostgreSQL sends response back
+OS receives TCP packet
+OS puts it in a buffer
+
+Now OS needs to tell your app
+"your data is ready"
+
+STEP 4 — How OS notifies Python
+──────────────────────────────────────
+This is where epoll comes in
+```
+**What is epoll?**
+```
+epoll is a Linux kernel mechanism
+for monitoring multiple file descriptors
+and notifying when they're ready
+
+File descriptor = OS representation of
+  • network socket (DB connection)
+  • file handle
+  • pipe
+
+┌─────────────────────────────────────┐
+│           LINUX KERNEL               │
+│                                      │
+│  epoll instance watches:            │
+│  ┌────────────────────────────┐     │
+│  │ fd1 → PostgreSQL socket    │     │
+│  │ fd2 → Redis socket         │     │
+│  │ fd3 → LLM API socket       │     │
+│  │ fd4 → another request...   │     │
+│  └────────────────────────────┘     │
+│                                      │
+│  When any fd has data ready:        │
+│  epoll_wait() returns immediately   │
+│  with list of ready fds             │
+└─────────────────────────────────────┘
+```
+**What PVM Actually Is?**
+```
+Your Python Code (.py)
+         │
+         ▼
+  Python Compiler
+         │
+         ▼
+  Bytecode (.pyc)
+         │
+         ▼
+┌─────────────────────────────────────┐
+│         PVM                          │
+│   (Python Virtual Machine)          │
+│                                      │
+│  • Executes bytecode                │
+│  • Manages memory                   │
+│  • Handles objects                  │
+│  • Is just a C program              │
+│    running on OS                    │
+└──────────────────┬──────────────────┘
+                   │
+                   │ PVM is still a
+                   │ normal OS process
+                   ▼
+┌─────────────────────────────────────┐
+│         OPERATING SYSTEM             │
+│                                      │
+│  Sees PVM as just another process   │
+│  Like any C/Java/Go program         │
+└─────────────────────────────────────┘
+```
+
+### Follow-up They Might Ask
+
+*"What if I have both I/O and CPU work in same handler?"*
+> *"Split them — do I/O in async def handler, offload CPU work to `run_in_executor()` or better a Celery worker for heavy tasks."*
+
+*"What async DB drivers do you use?"*
+> *"For PostgreSQL — asyncpg or SQLAlchemy async with asyncpg driver. For MongoDB — Motor. For Redis — aioredis."*
+
+*"How does run_in_executor work?"*
+> *"It submits a blocking function to a threadpool and returns an awaitable — so the event loop can continue serving other requests while the thread runs the blocking code."*
+
+---
 7. How do you define path parameters and query parameters in FastAPI?
 8. What is the request lifecycle in FastAPI?
 9. How do you run a FastAPI app in production? (Uvicorn + Gunicorn)
