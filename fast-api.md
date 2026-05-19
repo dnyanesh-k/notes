@@ -2016,10 +2016,234 @@ Single developer                Team with frontend
 
 ---
 
-**Section 2 — Pydantic & Validation (Q11–Q18) ready?**
-## 🟢 PYDANTIC & VALIDATION (11–18)
+## Q11. What is Pydantic? How Does FastAPI Use It?
+Pydantic is a Python data validation library that uses type hints to define data schemas and automatically validates, parses, and serializes data against those schemas. It's not FastAPI specific — it's used across the Python ecosystem for config management, data pipelines, and API validation.
 
-11. What is Pydantic? How does FastAPI use it?
+Pydantic v2 was completely rewritten in Rust, which makes validation extremely fast — we're talking microsecond level parsing even for complex nested models.
+
+FastAPI uses Pydantic in four specific places. 
+**1. for request body validation** — you define a BaseModel and FastAPI automatically validates incoming JSON against it. 
+
+**2. for response serialization** — response_model filters and validates what goes back to the client. 
+
+**3. for settings and config management** using BaseSettings. 
+
+**4. for path and query parameter validation** when you use Field() with constraints.
+
+The key insight is FastAPI doesn't write its own validation logic at all — it completely delegates that responsibility to Pydantic. 
+FastAPI's job is routing and dependency injection. 
+Pydantic's job is everything data related.
+
+
+### What Pydantic Does
+
+```
+RAW INPUT                    PYDANTIC                    YOUR CODE
+(JSON, dict,    ─────────────────────────────►   Clean typed Python
+ form data)                                        objects
+
+{                            BaseModel               SearchRequest(
+  "query": "hello",  ──►    validates      ──►        query="hello",
+  "top_k": "5",             coerces types             top_k=5,
+  "threshold": 0.8          applies defaults           threshold=0.8,
+}                           checks constraints          filters=None
+                            raises errors             )
+                            if invalid
+```
+
+---
+
+### Pydantic v1 vs v2 Internally
+
+```
+PYDANTIC V1                    PYDANTIC V2
+────────────────               ──────────────────────
+Pure Python                    Core rewritten in Rust
+~5-50x slower                  Microsecond validation
+.dict()                        .model_dump()
+.json()                        .model_dump_json()
+@validator                     @field_validator
+@root_validator                @model_validator
+schema()                       model_json_schema()
+
+FastAPI uses Pydantic v2
+from FastAPI 0.100.0+
+```
+
+---
+
+### How FastAPI Uses Pydantic — 4 Places
+
+---
+
+#### Place 1 — Request Body Validation
+
+```python
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class SearchRequest(BaseModel):
+    query: str                                    # required
+    top_k: int = Field(default=5, ge=1, le=20)   # optional, validated
+    threshold: float = Field(default=0.7, ge=0, le=1)
+    filters: Optional[dict] = None
+
+@app.post("/search")
+async def search(request: SearchRequest):
+    # FastAPI sees SearchRequest in signature
+    # Reads incoming JSON
+    # Passes to Pydantic for validation
+    # If valid → SearchRequest object handed to handler
+    # If invalid → 422 returned, handler never runs
+    pass
+
+# Valid request:
+# {"query": "hello", "top_k": 10}
+# → SearchRequest(query="hello", top_k=10,
+#                 threshold=0.7, filters=None) ✅
+
+# Invalid request:
+# {"top_k": 10}
+# → 422: query field required ❌
+
+# Type coercion:
+# {"query": "hello", "top_k": "5"}
+# → top_k coerced from "5" to 5 ✅
+# Pydantic is lenient about string→int
+```
+
+---
+
+#### Place 2 — Response Model
+
+```python
+class UserDB(BaseModel):
+    id: int
+    name: str
+    email: str
+    password_hash: str      # sensitive field
+    internal_score: float   # internal field
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    # no password_hash
+    # no internal_score
+
+@app.get("/users/{id}", response_model=UserResponse)
+async def get_user(id: int):
+    user = await db.get_user(id)
+    return user
+    # Even though user has password_hash and internal_score
+    # Pydantic filters them out via response_model
+    # Client only sees id, name, email ✅
+    # Security through response_model ✅
+```
+
+---
+
+#### Place 3 — Settings and Config
+
+```python
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str              # required
+    redis_url: str                 # required
+    openai_api_key: str            # required
+    llm_model: str = "gpt-4"      # optional with default
+    max_tokens: int = 1000
+    debug: bool = False
+
+    class Config:
+        env_file = ".env"          # reads from .env file
+
+# Pydantic reads from environment variables automatically
+# DATABASE_URL=postgresql://... → settings.database_url
+# Type validation on env vars too
+# Missing required var → error at startup not runtime
+
+settings = Settings()             # fails fast if config wrong
+```
+
+---
+
+#### Place 4 — Query and Path Validation
+
+```python
+from fastapi import Query, Path
+from pydantic import Field
+
+@app.get("/search")
+async def search(
+    # Query uses Pydantic Field internally
+    query: str = Query(..., min_length=3, max_length=100),
+    top_k: int = Query(default=5, ge=1, le=20),
+):
+    pass
+
+# Same Pydantic validation engine
+# Just applied to query params instead of body
+```
+
+---
+
+### Pydantic Validation Flow Internally
+
+```
+Incoming JSON
+      │
+      ▼
+FastAPI extracts body
+      │
+      ▼
+Calls Pydantic:
+SearchRequest.model_validate(data)
+      │
+      ├── Field exists?          No  → ValidationError
+      │                               (field required)
+      ├── Type matches?          No  → Try coercion
+      │     │                         Still fails → ValidationError
+      │     └── Coercion works?  Yes → use coerced value
+      ├── Constraints pass?      No  → ValidationError
+      │   (ge, le, min_length)        (value too small etc)
+      ├── Validators pass?       No  → ValidationError
+      │   (@field_validator)          (custom message)
+      └── All pass?              Yes → SearchRequest object ✅
+
+ValidationError
+      │
+      ▼
+FastAPI catches it automatically
+Returns 422 Unprocessable Entity:
+{
+  "detail": [
+    {
+      "loc": ["body", "top_k"],
+      "msg": "Input should be greater than or equal to 1",
+      "type": "greater_than_equal"
+    }
+  ]
+}
+```
+---
+### Follow-up They Might Ask
+
+*"What is the difference between Pydantic BaseModel and dataclasses?"*
+> *"Python dataclasses provide structure but no validation — wrong types are silently accepted. Pydantic BaseModel validates types, coerces where possible, and raises errors on invalid data. Also Pydantic has JSON serialization, schema generation, and nested model support built in — dataclasses have none of that."*
+
+*"What is model_validate vs direct instantiation?"*
+> *"Both validate. Direct instantiation `SearchRequest(query="hello")` is for creating models in code. `model_validate(dict)` is for parsing external data like JSON from requests. FastAPI uses model_validate internally when parsing request bodies."*
+
+*"Can Pydantic validate after model creation?"*
+> *"By default Pydantic v2 models are immutable after creation. You can allow mutation with `model_config = ConfigDict(validate_assignment=True)` which re-runs validation when you set a field value."*
+
+
+> *"@field_validator validates one field in isolation. @model_validator(mode='after') runs after all fields are validated and gives you the complete model object — use it when validation logic spans multiple fields like requiring field B when field A is True."*
+---
+
+
 12. What is a Pydantic `BaseModel`? How do you define one?
 13. How do you add field validation in Pydantic? (`Field`, `validator`, `model_validator`)
 14. What is the difference between Pydantic v1 and v2? (FastAPI uses v2 now)
@@ -2028,18 +2252,238 @@ Single developer                Team with frontend
 17. How do you validate nested models in Pydantic?
 18. What is `response_model` in FastAPI? Why is it important?
 
+All of these questions are covered above.
+
 ---
 
-## 🟡 DEPENDENCY INJECTION (19–25)
+## Q19. What is dependency injection in FastAPI?
 
-19. What is dependency injection in FastAPI?
-20. How does `Depends()` work? Write a simple example.
-21. How do you share a DB session across a request using `Depends`?
-22. What is the difference between function dependencies and class dependencies?
-23. How do you handle dependency caching? (`use_cache` parameter)
-24. How do you write a reusable auth dependency?
-25. Can dependencies have dependencies? How does FastAPI resolve them?
+Dependency Injection (DI) is a design pattern where a component declares *what it needs*, and a framework automatically provides (injects) those needs at runtime — rather than the component creating them itself.
 
+In FastAPI, the DI system is built into the framework. You declare dependencies as function parameters using `Depends()`, and FastAPI resolves, calls, and injects them before your route handler runs. This lets you cleanly separate concerns like auth, DB sessions, config, and validation.
+
+Why it matters:
+- Avoids code duplication across routes
+- Makes logic testable (you can override dependencies in tests)
+- Centralizes cross-cutting concerns (auth, logging, rate limiting)
+
+---
+
+## Q20. How does `Depends()` work?
+
+`Depends(callable)` wraps any callable — a function, async function, or class — and tells FastAPI: *"Call this first, and inject its return value into my parameter."*
+
+```python
+from fastapi import FastAPI, Depends
+
+app = FastAPI()
+
+def get_query_params(q: str = "default", limit: int = 10):
+    return {"q": q, "limit": limit}
+
+@app.get("/search")
+def search(params: dict = Depends(get_query_params)):
+    return params
+```
+
+When `GET /search?q=python&limit=5` is called:
+1. FastAPI sees `Depends(get_query_params)`
+2. It calls `get_query_params(q="python", limit=5)` — resolving its own params from the request
+3. The return value `{"q": "python", "limit": 5}` is injected into `params`
+4. Your route handler runs with `params` already populated
+
+`Depends` also supports `yield`-based dependencies (for resource lifecycle), class instances, and async functions.
+
+---
+
+## Q21. Sharing a DB session across a request using `Depends`
+
+The classic pattern. You use a `yield`-based dependency so the session is created before the route and cleaned up after — even if an exception occurs.
+
+```python
+from sqlalchemy.orm import Session
+from fastapi import Depends
+
+def get_db():
+    db = SessionLocal()   # open session
+    try:
+        yield db          # inject into route
+    finally:
+        db.close()        # always runs, even on error
+
+@app.get("/users/{id}")
+def get_user(id: int, db: Session = Depends(get_db)):
+    return db.query(User).filter(User.id == id).first()
+```
+
+Key points:
+- `yield` makes it a *context manager dependency* — code after `yield` is teardown
+- The session is opened once per request and shared across all dependencies that declare `Depends(get_db)` in the same request (due to caching — covered in Q23)
+- FastAPI guarantees the `finally` block runs regardless of success or exception
+
+---
+
+## Q22. Function vs Class dependencies
+
+**Function dependency** — a plain function (sync or async). Stateless, lightweight.
+
+```python
+def verify_token(token: str = Header(...)):
+    if token != "secret":
+        raise HTTPException(401)
+    return token
+```
+
+**Class dependency** — a class whose `__init__` receives parameters. Use this when you need *configurable*, stateful, or reusable logic with shared setup.
+
+```python
+class Paginator:
+    def __init__(self, page: int = 1, size: int = 10):
+        self.page = page
+        self.size = size
+        self.offset = (page - 1) * size
+
+@app.get("/items")
+def list_items(p: Paginator = Depends(Paginator)):
+    return {"offset": p.offset, "size": p.size}
+```
+
+FastAPI calls `Paginator(page=..., size=...)` automatically — the class instance is the injected value. You're passing the *class itself* to `Depends()`, not an instance. This is sometimes called a *callable class dependency*.
+
+Use class dependencies when:
+- You need configurable behavior (pass constructor args)
+- You want to group related query params as a reusable schema
+- You need to share state within a single dependency resolution
+
+---
+
+## Q23. Dependency caching — the `use_cache` parameter
+
+By default, FastAPI caches dependency results within a single request. If multiple places in the same request declare `Depends(get_db)`, the dependency is called **once** and the same result is reused.
+
+```python
+# Both use the SAME db session — get_db() called once per request
+@app.get("/data")
+def endpoint(
+    db1: Session = Depends(get_db),
+    db2: Session = Depends(get_db),   # same object as db1
+):
+    assert db1 is db2  # True
+```
+
+To **disable** caching and force a fresh call every time:
+
+```python
+def endpoint(
+    db: Session = Depends(get_db, use_cache=False)
+):
+    ...
+```
+
+When to disable caching:
+- The dependency has side effects you want repeated (e.g. timestamps, nonces)
+- You genuinely need two independent DB transactions in one request
+- Testing scenarios where isolation matters
+
+Default `use_cache=True` is almost always what you want — it prevents redundant DB connections and ensures transactional consistency within a request.
+
+---
+
+## Q24. Reusable auth dependency
+
+The standard pattern for JWT/Bearer token auth across protected routes:
+
+```python
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+import jwt
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return user_id
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Could not validate")
+
+# Protect any route — just add it as a dependency
+@app.get("/profile")
+def profile(user_id: str = Depends(get_current_user)):
+    return {"user": user_id}
+
+@app.delete("/account")
+def delete_account(user_id: str = Depends(get_current_user)):
+    ...
+```
+
+For role-based access, you can make it a factory:
+
+```python
+def require_role(role: str):
+    def checker(user=Depends(get_current_user)):
+        if user.role != role:
+            raise HTTPException(403)
+        return user
+    return checker
+
+@app.delete("/admin/users/{id}")
+def admin_delete(user=Depends(require_role("admin"))):
+    ...
+```
+---
+## Q25. Can dependencies have dependencies? How does FastAPI resolve them?
+
+Yes — and this is one of FastAPI's most powerful features. Dependencies can declare their own `Depends()`, forming a **dependency graph** that FastAPI resolves automatically using a topological sort.
+
+```python
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_current_user(db: Session = Depends(get_db)):
+    # uses the db to fetch user from token
+    token = ...
+    return db.query(User).filter(...).first()
+
+def get_admin_user(user: User = Depends(get_current_user)):
+    if not user.is_admin:
+        raise HTTPException(403)
+    return user
+
+@app.delete("/admin/data")
+def delete_data(admin=Depends(get_admin_user)):
+    ...
+```
+
+Resolution order for this route:
+1. `get_db()` — called first (deepest dependency)
+2. `get_current_user(db=...)` — gets the db session
+3. `get_admin_user(user=...)` — gets the user
+4. Route handler runs with `admin`
+
+FastAPI builds the entire graph, resolves it in dependency order, applies caching (same dependency = one call), and handles teardown in reverse order after the response.
+
+---
+
+Now let me show you this visually:
+![alt text](image-2.png)
+
+Now the dependency graph with caching — showing how `get_db` is only called once even though two things need it:
+
+![alt text](image-1.png)
+
+And finally the auth dependency chain — the most common real-world pattern you'll be asked about in interviews:---
+
+![alt text](image.png)
+
+The key interview insight: **dependency caching is scoped to a single request**. Across requests, each gets its own fresh resolution. Within a request, the same `Depends(x)` is evaluated once. That's how you safely share a DB session without accidentally sharing state between users.
 ---
 
 ## 🔴 AUTHENTICATION & SECURITY (26–31)
