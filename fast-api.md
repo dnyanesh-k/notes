@@ -1829,9 +1829,194 @@ No traffic spike during restart ✅
 *"How do you do zero downtime deployment?"*
 > *"In K8s — rolling updates replace pods gradually, new pod must pass readiness probe before old pod is killed. In bare metal — Gunicorn supports graceful reload with `kill -HUP <pid>` which spawns new workers before killing old ones."*
 
+---
+## Q10. Advantages of FastAPI Over Flask for AI/ML Applications
+
+Flask was the default Python API framework for years, but for AI/ML applications specifically FastAPI has significant advantages that make it a much better choice.
+
+The biggest one is async support. AI/ML endpoints are inherently I/O heavy — you're waiting on vector DB queries, LLM API calls, embedding generation, model inference. Flask is synchronous by default — each request blocks the worker until the AI operation completes. FastAPI's async support means one worker can handle hundreds of concurrent AI requests simultaneously while waiting on those I/O operations.
+
+Second is automatic validation through Pydantic. AI endpoints typically have complex request bodies — query text, model parameters, filter conditions, retrieval config. In Flask you manually validate everything with if statements or a separate library. In FastAPI you define a Pydantic model and validation, type coercion, and error responses are completely automatic.
+
+Third is performance. FastAPI with Uvicorn is 2-3x faster than Flask with Gunicorn for I/O heavy workloads — which is exactly what AI applications are.
+
+Fourth is developer experience — auto docs, type safety, editor autocomplete. For AI teams iterating fast on complex APIs this matters a lot.
+
+At CitiusTech the decision was straightforward — our RAG pipeline endpoints needed concurrent handling of vector DB and LLM calls, complex Pydantic models for retrieval config, and fast iteration with auto docs for frontend team integration. Flask simply couldn't meet those requirements without significant extra tooling.
 
 ---
 
+### Head to Head Comparison
+
+```
+AI/ML ENDPOINT REQUIREMENTS
+─────────────────────────────────────────────────
+
+1. Handle concurrent LLM calls        →  ASYNC critical
+2. Complex request/response models    →  VALIDATION critical  
+3. Fast iteration with auto docs      →  DX critical
+4. High throughput                    →  PERFORMANCE critical
+5. Type safety for ML parameters      →  TYPE HINTS critical
+```
+
+---
+
+### Advantage 1 — Async for AI Workloads
+
+```python
+# FLASK — Synchronous
+# One request blocks entire worker
+@app.route("/search", methods=["POST"])
+def search():
+    # Each of these BLOCKS the worker
+    embedding = embed_model.encode(query)    # 50ms blocked
+    results = vector_db.search(embedding)    # 100ms blocked
+    response = openai.chat(results)          # 500ms blocked
+    return jsonify(response)
+    # Total: 650ms, worker doing nothing 90% of time
+    # 4 workers = max 4 concurrent requests 😢
+
+# FASTAPI — Asynchronous
+# Event loop serves other requests while waiting
+@app.post("/search")
+async def search(query: SearchRequest):
+    # Each await frees event loop for other requests
+    embedding = await embed_model.encode(query)    # 50ms free
+    results = await vector_db.search(embedding)    # 100ms free
+    response = await llm_client.complete(results)  # 500ms free
+    return response
+    # Total: 650ms but worker serves hundreds concurrently 🚀
+```
+
+---
+
+### Advantage 2 — Pydantic for Complex AI Models
+
+```python
+# FLASK — Manual validation nightmare
+@app.route("/search", methods=["POST"])
+def search():
+    data = request.json
+    
+    # Manual validation for every field
+    if not data.get("query"):
+        return jsonify({"error": "query required"}), 400
+    if not isinstance(data.get("top_k", 5), int):
+        return jsonify({"error": "top_k must be int"}), 400
+    if data.get("threshold", 0.7) < 0 or data.get("threshold", 0.7) > 1:
+        return jsonify({"error": "threshold 0-1"}), 400
+    # 20 lines of validation for a simple request 😢
+
+# FASTAPI — Automatic validation
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=20)
+    threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    filters: Optional[dict] = None
+    rerank: bool = False
+
+@app.post("/search")
+async def search(request: SearchRequest):
+    # Already validated, typed, defaults applied ✅
+    # Invalid request → automatic 422 with field details
+    pass
+```
+
+---
+
+### Advantage 3 — Performance Numbers
+
+```
+BENCHMARK — I/O Heavy Workload
+(typical AI API — DB + external API calls)
+
+Framework          Requests/sec    Latency p99
+──────────────────────────────────────────────
+FastAPI+Uvicorn    ~45,000 rps     ~12ms
+Flask+Gunicorn     ~15,000 rps     ~35ms
+Django+Gunicorn    ~10,000 rps     ~45ms
+
+FastAPI is 3x faster than Flask
+for I/O heavy AI workloads
+
+Why?
+• Uvicorn (ASGI) vs Gunicorn (WSGI)
+• Pydantic v2 (Rust) vs Marshmallow (Python)
+• Native async vs sync + threading
+```
+
+---
+
+### Advantage 4 — Auto Docs for AI Teams
+
+```
+FLASK                           FASTAPI
+──────────────────              ──────────────────────
+No built-in docs                Auto Swagger at /docs
+Must write manually             Auto ReDoc at /redoc
+Must maintain separately        Always in sync with code
+Extra library needed            Zero extra config
+  (Flasgger, Flask-RESTX)
+Docs get out of sync            Impossible to be out of sync
+  with code
+
+For AI teams:
+Frontend team can test          Frontend team can test
+LLM endpoints manually          LLM endpoints directly
+only after reading docs         in browser via Swagger
+```
+
+---
+
+### Advantage 5 — Type Safety for ML
+
+```python
+# Type hints make AI code safer and IDE friendly
+
+class RAGConfig(BaseModel):
+    # IDE autocompletes these fields
+    # Wrong type = caught at request time not runtime
+    chunk_size: int = 512
+    chunk_overlap: int = 50
+    embedding_model: str = "minilm"
+    top_k: int = 5
+    rerank: bool = True
+    llm_model: Literal["gpt-4", "gpt-3.5", "llama3"] = "gpt-4"
+
+# Flask has none of this — plain dicts everywhere
+# Typo in field name? Silent bug in production 💀
+```
+
+---
+
+### When Flask is Still Fine
+
+```
+Use Flask when:                 Use FastAPI when:
+──────────────────              ──────────────────────
+Simple CRUD app                 AI/ML endpoints
+Low concurrency                 High concurrency
+Quick prototype                 Production AI system
+Team knows Flask well           New project
+No complex validation           Complex request models
+No AI/ML involved               LLM/vector DB calls
+Single developer                Team with frontend
+```
+---
+### Follow-up They Might Ask
+
+*"Can Flask do async?"*
+> *"Flask added async support in 2.0 but it's retrofitted — you need to install extra dependencies, it uses threading under the hood not a true event loop, and the ecosystem of async libraries doesn't integrate as cleanly as FastAPI's native async. It's async in name but not in spirit."*
+
+*"Would you ever use Flask over FastAPI today?"*
+> *"For quick internal scripts or prototypes where I need an HTTP endpoint fast and don't care about performance or validation — Flask's simplicity is still appealing. But for any production AI system, FastAPI is the clear choice."*
+
+*"What about Django REST Framework for AI APIs?"*
+> *"Django is too heavy for AI microservices — it brings ORM, admin, auth, templating, all of which you don't need for an AI API endpoint. FastAPI's minimal footprint is much better suited for focused AI microservices."*
+
+---
+
+**Section 2 — Pydantic & Validation (Q11–Q18) ready?**
 ## 🟢 PYDANTIC & VALIDATION (11–18)
 
 11. What is Pydantic? How does FastAPI use it?
