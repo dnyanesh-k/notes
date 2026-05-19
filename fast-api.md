@@ -81,7 +81,7 @@ Answer:
 
 ## Q3. What is ASGI? How is it different from WSGI?
 
-"WSGI and ASGI are both interface specifications that define how a Python web application communicates with a web server — but they handle concurrency completely differently.
+WSGI and ASGI are both interface specifications that define how a Python web application communicates with a web server — but they handle concurrency completely differently.
 
 WSGI — Web Server Gateway Interface — was introduced in 2003 and is synchronous. It handles one request at a time per worker process. So if you have 4 Gunicorn workers, you can handle 4 simultaneous requests. If a request is waiting for a DB call, that worker is completely blocked doing nothing. To scale you just add more workers — which means more memory and processes.
 
@@ -136,9 +136,169 @@ Worker 1: Request A → waiting for DB...
 > *"For simple CRUD apps with low concurrency, or when team is more comfortable with Flask/Django and the workload doesn't justify async complexity. WSGI is simpler to debug and reason about."*
 
 ---
+## Q4. How does FastAPI Auto-Generate OpenAPI/Swagger Documentation?
 
-4. How does FastAPI auto-generate OpenAPI/Swagger documentation?
+FastAPI generates documentation by inspecting three things at startup
+- route definitions 
+- Python type hints
+- Pydantic models 
+and building an OpenAPI schema from them without any extra code.
+
+When you define a route with path parameters, query parameters, or a Pydantic request body, FastAPI reads the type annotations at import time and converts them into a JSON Schema. This JSON Schema becomes the OpenAPI spec, which is served at /openapi.json.
+
+FastAPI then serves two UI tools on top of that spec — Swagger UI at /docs which is interactive, meaning you can actually call endpoints directly from the browser — and ReDoc at /redoc which is better for reading documentation.
+
+The powerful part is it's always in sync with your code. Since the docs are generated from your actual type hints and Pydantic models, there's no separate documentation file to maintain. If you add a new field to your Pydantic model, it automatically appears in the docs.
+
+> a type hint is a special syntax that allows you to explicitly state what data type a variable, function parameter, or return value is expected to be
+---
+### How It Works Internally
+
+```
+Step 1 — App Startup
+─────────────────────────────────────────
+@app.post("/search")
+async def search(query: SearchRequest) -> SearchResponse:
+    ...
+
+FastAPI calls add_api_route() internally
+Stores route metadata in app.routes list
+
+         ↓
+
+Step 2 — Route Inspection
+─────────────────────────────────────────
+FastAPI uses Python's inspect module to read:
+- Function signature          → parameter names
+- Type hints (if present)     → field types
+- Pydantic models (if present)→ nested schema
+- Default values              → optional/required
+- Decorators metadata         → path, method, summary
+
+         ↓
+
+Step 3 — JSON Schema Generation
+─────────────────────────────────────────
+Pydantic models → .model_json_schema()
+                → generates JSON Schema per model
+
+No Pydantic?    → FastAPI infers basic schema
+                  from type hints alone
+No type hints?  → parameter exists but type = unknown
+
+         ↓
+
+Step 4 — OpenAPI Spec Assembly
+─────────────────────────────────────────
+FastAPI assembles everything into
+one OpenAPI 3.0 compliant JSON object:
+
+{
+  "paths": {
+    "/search": {
+      "post": {
+        "parameters": [...],
+        "requestBody": {...},
+        "responses": {...}
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SearchRequest": {...},
+      "SearchResponse": {...}
+    }
+  }
+}
+
+Served at → /openapi.json
+
+         ↓
+
+Step 5 — UI Rendering
+─────────────────────────────────────────
+/docs   → Swagger UI reads /openapi.json → renders interactive UI
+/redoc  → ReDoc reads /openapi.json      → renders readable UI
+
+Both UIs are just static JS that consume /openapi.json
+FastAPI doesn't generate HTML — the JS does it at runtime
+```
+---
+
+### Quick Code Reference
+
+```python
+# Everything below auto-appears in docs
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import Optional
+
+app = FastAPI(
+    title="AI Search API",        # appears in docs header
+    description="RAG search API", # appears in docs
+    version="1.0.0"
+)
+
+class SearchRequest(BaseModel):
+    """Search query model"""        # docstring appears in docs
+    text: str                       # required field
+    top_k: int = 5                  # optional with default
+    filters: Optional[dict] = None  # optional field
+
+@app.post(
+    "/search",
+    summary="Semantic Search",          # endpoint title in docs
+    description="Search knowledge base" # endpoint description
+)
+async def search(query: SearchRequest):
+    ...
+```
+
+---
+
+### How to Customize Docs
+
+```python
+# Disable docs in production
+app = FastAPI(docs_url=None, redoc_url=None)
+
+# Custom docs URL
+app = FastAPI(docs_url="/api-docs")
+
+# Add auth to docs
+from fastapi.openapi.utils import get_openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title="My API",
+        version="1.0.0",
+        routes=app.routes
+    )
+    app.openapi_schema = schema
+    return schema
+
+app.openapi = custom_openapi
+```
+
+---
+
+### Follow-up They Might Ask
+
+*"How do you hide certain endpoints from docs?"*
+> *"Use `include_in_schema=False` in the route decorator — `@app.get("/internal", include_in_schema=False)`"*
+
+*"How do you add authentication to Swagger UI?"*
+> *"Use `SecurityScheme` in OpenAPI config — typically adding `OAuth2PasswordBearer` or `APIKeyHeader` which automatically adds an Authorize button in Swagger UI."*
+
+*"Can you disable docs in production?"*
+> *"Yes — set `docs_url=None` and `redoc_url=None` when initializing FastAPI. Common practice to disable in production for security."*
+
+
 5. What is Uvicorn? What role does it play in FastAPI?
+
 6. What is the difference between `async def` and `def` route handlers in FastAPI?
 7. How do you define path parameters and query parameters in FastAPI?
 8. What is the request lifecycle in FastAPI?
