@@ -3343,18 +3343,245 @@ What relationship?
 31. What is `HTTPException`? How do you raise custom errors?
 
 ---
-
-## 🟣 DATABASE & ORM (32–38)
-
-32. How do you connect FastAPI to PostgreSQL using SQLAlchemy?
-33. What is the difference between sync and async SQLAlchemy in FastAPI?
-34. How do you manage DB sessions in FastAPI? (per-request session pattern)
-35. What is Alembic? How do you run migrations?
-36. How do you connect FastAPI to MongoDB? (Motor async driver)
-37. How do you implement pagination in FastAPI with SQLAlchemy?
-38. What is the N+1 query problem? How do you avoid it in SQLAlchemy?
+Let me build this entire guide now — complete theory + diagrams across all 6 questions.
 
 ---
+
+## Q26. JWT Authentication in FastAPI
+
+JWT (JSON Web Token) is a self-contained token: all claims are encoded inside it, so the server doesn't need a database lookup to validate it — just a signature check.
+
+A JWT has 3 parts:
+ **Header** (algorithm) · **Payload** (claims: `sub`, `exp`, `role`) · **Signature** (HMAC of header+payload using your secret key).
+
+The full flow:
+1. User `POST /auth/token` with username + password(login)
+2. Server verifies credentials, creates JWT signed with `SECRET_KEY`
+3. Client stores token, sends it as `Authorization: Bearer <token>` on every request
+4. Server decodes + verifies signature on each protected route — no DB hit needed
+
+```python
+# pip install python-jose[cryptography] passlib[bcrypt]
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from datetime import datetime, timedelta
+
+SECRET_KEY = "your-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"])
+
+def create_access_token(data: dict):
+    payload = data.copy()
+    payload["exp"] = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+@app.post("/auth/token")
+def login(form: OAuth2PasswordRequestForm = Depends()):
+    user = db.query(User).filter(User.email == form.username).first()
+    if not user or not pwd_context.verify(form.password, user.hashed_password):
+        raise HTTPException(401, "Invalid credentials")
+    token = create_access_token({"sub": str(user.id), "role": user.role})
+    return {"access_token": token, "token_type": "bearer"}
+```
+
+---
+
+## Q27. What is OAuth2PasswordBearer?
+
+`OAuth2PasswordBearer` is a FastAPI utility that implements the OAuth2 "password flow" — it tells FastAPI: *"extract the Bearer token from the `Authorization` header of this request."*
+
+It does two things:
+- **Extraction** — pulls the raw token string from `Authorization: Bearer <token>`
+- **OpenAPI docs** — marks the endpoint as requiring Bearer auth in the Swagger UI (adds the "Authorize" button)
+
+It does **not** validate the token — that's your job inside `get_current_user`.
+
+```python
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+# tokenUrl is only used for the Swagger UI "Authorize" button
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(401, "Invalid token payload")
+        return db.query(User).filter(User.id == user_id).first()
+    except JWTError:
+        raise HTTPException(401, "Token validation failed")
+```
+
+If no `Authorization` header is present, `OAuth2PasswordBearer` automatically raises a `401`(Unauthorized) before your code even runs.
+
+---
+
+## Q28. Role-Based Access Control (RBAC)
+
+RBAC restricts routes based on what role a user has (`admin`, `editor`, `viewer`). The cleanest FastAPI pattern is a **dependency factory** — a function that *returns* a dependency:
+
+```python
+def require_role(*roles: str):
+    def checker(user: User = Depends(get_current_user)):
+        if user.role not in roles:
+            raise HTTPException(403, f"Requires one of: {roles}")
+        return user
+    return checker
+
+# Usage — clean and declarative
+@app.get("/admin/dashboard")
+def admin_dashboard(user = Depends(require_role("admin"))):
+    return {"user": user.email}
+
+@app.put("/content/{id}")
+def edit_content(id: int, user = Depends(require_role("admin", "editor"))):
+    ...
+
+@app.get("/reports")
+def view_reports(user = Depends(require_role("admin", "editor", "viewer"))):
+    ...
+```
+
+For more complex RBAC (permission-based, not just role-based), store permissions in the JWT payload and check them:
+
+```python
+def require_permission(permission: str):
+    def checker(user: User = Depends(get_current_user)):
+        if permission not in user.permissions:  # e.g. ["read:reports", "write:content"]
+            raise HTTPException(403, "Insufficient permissions")
+        return user
+    return checker
+```
+
+---
+
+## Q29. Securing FastAPI endpoints
+
+Three main strategies, often layered together:
+
+**API Key** — simplest, for machine-to-machine:
+
+```python
+from fastapi.security import APIKeyHeader
+
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+def verify_api_key(key: str = Depends(api_key_header)):
+    if key != settings.API_KEY:
+        raise HTTPException(403, "Invalid API key")
+    return key
+```
+
+**JWT** — covered above — for user-facing auth with expiry and claims.
+
+**OAuth2 (third-party)** — for "Login with Google/GitHub". Use `authlib` or `python-social-auth` — outside FastAPI's built-in scope.
+
+**Layering strategies** — you can combine them:
+
+```python
+# Require BOTH a valid JWT AND a specific role
+@app.delete("/admin/users/{id}")
+def delete_user(
+    user = Depends(require_role("admin")),  # checks JWT + role
+    _key = Depends(verify_api_key),         # also checks API key
+):
+    ...
+```
+
+---
+
+## Q30. CORS in FastAPI
+
+CORS (Cross-Origin Resource Sharing) is a browser security mechanism. When your React frontend at `https://app.example.com` calls your API at `https://api.example.com`, the browser sends a preflight `OPTIONS` request to check if the server allows it. Without CORS headers, the browser blocks the response.
+
+FastAPI uses Starlette's `CORSMiddleware`:
+
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.example.com"],  # NEVER use ["*"] in production with credentials
+    allow_credentials=True,   # allows cookies / Authorization headers
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+```
+
+Key rules:
+- `allow_origins=["*"]` + `allow_credentials=True` is **invalid** — browsers reject it. You must list explicit origins when using credentials.
+- For development: `allow_origins=["http://localhost:3000"]`
+- CORS is a **browser** restriction only. Postman, curl, and server-to-server calls ignore it entirely.
+
+---
+
+## Q31. HTTPException and custom errors
+
+`HTTPException` is FastAPI's standard way to return error responses with a proper HTTP status code:
+
+```python
+from fastapi import HTTPException
+
+@app.get("/users/{id}")
+def get_user(id: int, db = Depends(get_db)):
+    user = db.query(User).filter(User.id == id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+```
+
+**Custom exception handlers** — for app-wide consistent error responses:
+
+```python
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+class AppException(Exception):
+    def __init__(self, status_code: int, code: str, message: str):
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}}
+    )
+
+# Usage
+raise AppException(404, "USER_NOT_FOUND", "No user with that ID exists")
+# → {"error": {"code": "USER_NOT_FOUND", "message": "No user with that ID exists"}}
+```
+
+**Override the default 422 validation error** (Pydantic parse errors):
+```python
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"error": {"code": "VALIDATION_ERROR", "fields": exc.errors()}}
+    )
+```
+
+---
+
+First, the full JWT flow end-to-end:
+Now the diagrams. 
+
+![alt text](image-3.png)
+
+![alt text](image-4.png)
+
+
+Now the RBAC dependency factory pattern — how roles map to routes:
+![alt text](image-5.png)
+
 
 ## 🔵 MIDDLEWARE & BACKGROUND TASKS (39–44)
 
