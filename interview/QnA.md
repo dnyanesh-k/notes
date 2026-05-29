@@ -2876,3 +2876,66 @@ For me, staying current isn’t about knowing every new model name — it’s ab
 
 **Tip if they ask for examples:** mention reading release notes, trying new retrieval/agent patterns in side experiments, and learning from production incidents — that sounds practical, not buzzword-heavy.
 ---
+## Q21. What is transformer Architecture?
+The Transformer architecture is a deep learning model introduced in the 2017 paper [“Attention Is All You Need”](https://www.youtube.com/watch?v=XwYY0lCGWW8). It relies entirely on a self-attention mechanism to capture global dependencies in data, completely eliminating the sequential processing constraints found in traditional recurrent networks like LSTMs or RNNs. [1, 2, 3, 4, 5] 
+Below is a visual breakdown of the architecture, followed by a crisp, high-density overview tailored for a technical interview. [6] 
+## 📐 Structural Block Diagram
+
+```
+
+       [ INPUTS ]                             [ OUTPUTS (shifted right) ]
+           │                                               │
+    [ Token Embed ]                                 [ Token Embed ]
+           │                                               │
+   [ Pos Encoding ] ────────┐                       [ Pos Encoding ] ────────┐
+           │                │                              │                │
+     (⊕ Add Vectors)        │                        (⊕ Add Vectors)        │
+           │                │                              │                │
+    ┌──────┴──────────────┐ │                       ┌──────┴──────────────┐ │
+    │   ENCODER STACK     │ │                       │   DECODER STACK     │ │
+    │ ┌─────────────────┐ │ │                       │ ┌─────────────────┐ │ │
+    │ │ Multi-Head Self │ │ │                       │ │ Masked Multi-   │ │ │
+    │ │    Attention    │ │ │                       │ │ Head Attention  │ │ │
+    │ └────────┬────────┘ │ │                       │ └────────┬────────┘ │ │
+    │          ├─── Add &─┘ │                       │          ├─── Add &─┘ │
+    │          ▼   Norm     │                       │          ▼   Norm     │
+    │ ┌─────────────────┐   │                       │ ┌─────────────────┐   │
+    │ │  Feed-Forward   │   │                       │ │   Encoder-Dec   │   │
+    │ │     Network     │   │                       │ │    Attention    │   │
+    │ └────────┬────────┘   │                       │ └────────┬────────┘   │
+    │          ├─── Add &   │                       │          ├─── Add &   │
+    │          ▼   Norm     │                       │          ▼   Norm     │
+    └──────────┬────────────┘                       │ ┌─────────────────┐   │
+               │                                    │ │  Feed-Forward   │   │
+               │ (Passes Keys & Values K, V)        │ │     Network     │   │
+               └───────────────────────────────────►│ └────────┬────────┘   │
+                                                    │          ├─── Add &   │
+                                                    │          ▼   Norm     │
+                                                    └──────────┬────────────┘
+                                                               │
+                                                       [ Linear Layer ]
+                                                               │
+                                                        [ Softmax Layer ]
+                                                               │
+                                                               ▼
+                                                      [ Target Token Prob ]
+
+```
+-----------------------------
+## 🧠 Core Components Explained
+A standard explanation should walk through these five primary technical layers sequentially: [7] 
+
+* Positional Encoding: Transformers process entire sequences at once, meaning they lack intrinsic knowledge of word order. Fixed or learned mathematical sine and cosine wave functions inject sequential positioning vectors directly into the input token embeddings. [3, 9, 10, 11] 
+* Multi-Head Self-Attention: This allows tokens to communicate with each other dynamically. The engine maps vectors into Query ($Q$), Key ($K$), and Value ($V$) matrices. The system runs multiple attention modules in parallel, calculating scaled dot-product attention scores to capture various context angles simultaneously:
+$$\text{Attention}(Q,K,V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$ [2, 12, 13, 14, 15] 
+* Residual Connections & Layer Normalization (Add & Norm): Skip connections flow around each core processing block to pass untouched gradients directly. This approach minimizes vanishing gradient limitations during backpropagation and stabilizes model training. [9, 16, 17, 18, 19] 
+* Position-Wise Feed-Forward Network (FFN): A standalone, fully connected multi-layer perceptron processes each sequential position individually. It uses two distinct linear transformations split by a non-linear structural layer (like ReLU or GELU) to project features into a higher mathematical dimension. [16, 17, 20, 21, 22] 
+* Linear & Softmax Output: The raw multi-dimensional vectors leaving the decoder map straight back into vocabulary logits through a standard dense linear classification layer. Softmax normalizes those parameters into clean, precise probability distributions to output the single most accurate next token. [16, 23] 
+
+------------------------------
+## ⚡ Why Transformers Won (The "Interview Pitch")
+When recruiters ask why this shift occurred over older recurrent neural designs, hit these major architectural metrics: [2] 
+
+* Massive Parallelization: Unlike LSTMs that must calculate sequence elements one word at a time, Transformers evaluate whole sentences in parallel batches, drastically accelerating GPU training cycles. [2, 7, 24, 25, 26] 
+* Solving Long-Range Dependencies: Attention layers retain equal mathematical reach over long distances. This completely avoids the data loss or memory degradation risks that disrupt RNN structures over vast passages. [2, 7, 9, 27] 
+
