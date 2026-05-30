@@ -1,0 +1,56 @@
+name: incident_response
+description: >
+  Engineer reports a production service outage. The agent must retrieve
+  the incident response playbook and provide a structured response plan.
+
+prompt: "We have a production incident — our main service is completely down. What should I do?"
+
+hard_gates:
+  search_kb_must_be_first: true
+  required_cards:
+    - playbook_incident_response.md
+
+expected_topics:
+  - acknowledge
+  - assess impact
+  - identify root cause
+  - mitigate
+  - communicate
+
+expected_answer_theme: >
+  The answer should walk through incident response steps: acknowledge the incident,
+  assess impact/severity, identify root cause using logs, apply a mitigation or rollback,
+  and communicate status to stakeholders.
+
+pass_threshold: 75
+
+# Mock proxy — canned tool responses used during eval
+mock_responses:
+  search_kb: |
+    Matched knowledge cards:
+
+      Score : 0.88
+      Load  : brain/playbook_incident_response.md
+      Trigger: production incident, service down, outage, incident response, p0, p1
+
+  read_file:
+    playbook_incident_response.md: |
+      # Playbook — Production Incident Response
+
+      ## Step 1 — Acknowledge
+      Declare the incident in your incident channel within 5 minutes.
+
+      ## Step 2 — Assess Impact
+      Who is affected? How many users? Is revenue impacted?
+
+      ## Step 3 — Identify Root Cause
+      kubectl logs -f <pod>, check Datadog/Grafana for error spikes.
+
+      ## Step 4 — Mitigate
+      Roll back with: kubectl rollout undo deployment/<service>
+
+      ## Step 5 — Communicate
+      Post status updates every 15 minutes to stakeholders.
+
+      ## Step 6 — Post-Incident Review
+      Write an RCA within 48 hours.

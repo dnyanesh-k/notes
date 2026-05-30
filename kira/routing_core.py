@@ -1,10 +1,16 @@
 """
 Semantic routing engine.
 Embeds trigger phrases with MiniLM, searches by cosine similarity at query time.
+
+Hot-reload: a background thread watches brain/routing.md for file changes.
+When the file is modified, it rebuilds the index in the background and then
+atomically swaps the reference so in-flight queries always see a complete index.
 """
 
 from __future__ import annotations
 
+import threading
+import time as _time
 import numpy as np
 from pathlib import Path
 from fastembed import TextEmbedding
@@ -12,8 +18,14 @@ from fastembed import TextEmbedding
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 THRESHOLD = 0.40  # slightly lower than production 0.44 for demo friendliness
 
+ROUTING_FILE = "brain/routing.md"
+WATCH_INTERVAL = 2.0   # seconds between mtime checks
+
 _model: TextEmbedding | None = None
 _index: list[dict] | None = None
+_index_lock = threading.Lock()           # protects the atomic swap
+_last_mtime: float = 0.0
+_watcher_started = False
 
 
 # ─── Model ────────────────────────────────────────────────────────────────────
@@ -66,20 +78,81 @@ def _parse_routing(text: str) -> list[dict]:
 
 
 def _build_index(routing_path: str = "brain/routing.md") -> list[dict]:
+    import json, datetime
     text = Path(routing_path).read_text(encoding="utf-8")
     entries = _parse_routing(text)
     for entry in entries:
         # Embed full trigger + each individual phrase
         all_texts = [entry["trigger"]] + entry["phrases"]
         entry["vectors"] = _embed(all_texts)  # shape: (n_phrases+1, 384)
+
+    # Write human-readable snapshot (no raw vectors) so the index is visible
+    snapshot = {
+        "built_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "model": MODEL_NAME,
+        "threshold": THRESHOLD,
+        "total_entries": len(entries),
+        "entries": [
+            {
+                "trigger": e["trigger"],
+                "phrases": e["phrases"],
+                "phrase_count": len(e["phrases"]),
+                "vector_shape": list(e["vectors"].shape),   # e.g. [3, 384]
+                "files": e["files"],
+            }
+            for e in entries
+        ],
+    }
+    snapshot_path = Path(routing_path).parent / "index_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return entries
 
 
 def _get_index() -> list[dict]:
-    global _index
-    if _index is None:
-        _index = _build_index()
+    global _index, _last_mtime
+    with _index_lock:
+        if _index is None:
+            _index = _build_index()
+            try:
+                _last_mtime = Path(ROUTING_FILE).stat().st_mtime
+            except OSError:
+                pass
     return _index
+
+
+# ─── Hot-reload watcher ───────────────────────────────────────────────────────
+
+def _watcher_loop() -> None:
+    """Background thread: polls routing.md mtime, rebuilds + atomically swaps index."""
+    global _index, _last_mtime
+    while True:
+        _time.sleep(WATCH_INTERVAL)
+        try:
+            mtime = Path(ROUTING_FILE).stat().st_mtime
+        except OSError:
+            continue
+        if mtime != _last_mtime:
+            print(f"\n  [HotReload] brain/routing.md changed — rebuilding index...")
+            try:
+                new_index = _build_index()
+                with _index_lock:       # atomic swap: old index stays live until this point
+                    _index = new_index
+                    _last_mtime = mtime
+                print(f"  [HotReload] Done — {len(new_index)} entries loaded. Snapshot updated: brain/index_snapshot.json\n")
+            except Exception as exc:
+                print(f"  [HotReload] Rebuild failed: {exc} — keeping old index.\n")
+
+
+def start_watcher() -> None:
+    """Start the hot-reload watcher thread (daemon so it dies with the main process)."""
+    global _watcher_started
+    if _watcher_started:
+        return
+    _watcher_started = True
+    t = threading.Thread(target=_watcher_loop, daemon=True, name="routing-watcher")
+    t.start()
 
 
 # ─── Search ───────────────────────────────────────────────────────────────────

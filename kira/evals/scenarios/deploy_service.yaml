@@ -1,0 +1,54 @@
+name: deploy_service
+description: >
+  Engineer asks how to deploy a FastAPI service to Kubernetes.
+  The agent must retrieve the deployment knowledge card and surface
+  concrete kubectl steps.
+
+prompt: "How do I deploy my FastAPI service to Kubernetes?"
+
+# Hard gates — fail immediately if violated
+hard_gates:
+  search_kb_must_be_first: true          # search_kb must be the very first tool call
+  required_cards:                         # these files must be passed to read_file
+    - knowledge_card.md
+
+# LLM critic — topics the final answer must address
+expected_topics:
+  - docker build
+  - push image
+  - kubectl apply
+  - rollout status
+
+expected_answer_theme: >
+  The answer should explain building a docker image, pushing it to a registry,
+  applying a Kubernetes manifest, and verifying rollout status with kubectl.
+
+pass_threshold: 75         # overall score (0-100) needed to pass
+
+# Mock proxy — canned tool responses used during eval (no MCP server or MiniLM needed)
+mock_responses:
+  search_kb: |
+    Matched knowledge cards:
+
+      Score : 0.91
+      Load  : brain/knowledge_card.md
+      Trigger: deploy service, kubernetes deployment, release new version, kubectl deploy
+
+  read_file:
+    knowledge_card.md: |
+      # Python Service Deployment Guide
+
+      ## Docker Build
+      docker build -t myservice:latest .
+      docker push registry.company.com/myservice:latest
+
+      ## Kubernetes Deploy
+      kubectl set image deployment/myservice myservice=registry.company.com/myservice:latest
+      kubectl rollout status deployment/myservice
+
+      ## Common Issues
+      - CrashLoopBackOff: check logs with kubectl logs -f <pod>
+      - ImagePullBackOff: verify registry credentials
+
+      ## Rollback
+      kubectl rollout undo deployment/myservice
