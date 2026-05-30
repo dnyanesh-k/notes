@@ -1,6 +1,6 @@
-Here is a concise list of **design patterns used in ARIA**, whether they are useful, and a short reference table you can use for interviews or docs.
+Here is a concise list of **design patterns used in KIRA**, whether they are useful, and a short reference table you can use for interviews or docs.
 
-**Verdict:** Yes — most of these are **genuinely useful**, especially for **enterprise/local-first AI assistants**. A few are ARIA-specific optimizations rather than universal patterns.
+**Verdict:** Yes — most of these are **genuinely useful**, especially for **enterprise/local-first AI assistants**. A few are KIRA-specific optimizations rather than universal patterns.
 
 ---
 
@@ -17,9 +17,9 @@ Here is a concise list of **design patterns used in ARIA**, whether they are use
 
 ---
 
-## ARIA design patterns (short table)
+## KIRA design patterns (short table)
 
-| # | Design pattern | What it is in ARIA | Useful? |
+| # | Design pattern | What it is in KIRA | Useful? |
 |---|----------------|-------------------|---------|
 | 1 | **RAG routing (not full-doc RAG)** | Semantic search maps user intent → curated knowledge cards/playbooks, not raw PDF chunks | **Yes** — simpler and more controllable for enterprise SOPs |
 | 2 | **Retrieve-before-act gate** | Agent must search knowledge base before any other tool/action | **Yes** — reduces hallucination and wrong playbook usage |
@@ -81,7 +81,7 @@ If you want the **highest-value** ones to mention:
 
 ---
 
-## Patterns that are useful but ARIA-specific
+## Patterns that are useful but KIRA-specific
 
 | Pattern | Good for | Less ideal when |
 |---------|----------|-----------------|
@@ -94,6 +94,6 @@ If you want the **highest-value** ones to mention:
 
 ## One-line summary for interviews
 
-> "ARIA combines **RAG routing**, **MCP tool calling**, **persona guardrails**, **modular knowledge cards**, and **eval-driven agent quality** — a practical enterprise pattern for grounded, auditable AI assistants."
+> "KIRA combines **RAG routing**, **MCP tool calling**, **persona guardrails**, **modular knowledge cards**, and **eval-driven agent quality** — a practical enterprise pattern for grounded, auditable AI assistants."
 
 Want this turned into a **1-page cheat sheet** (pattern → interview one-liner) for quick revision before your interview?

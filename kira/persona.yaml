@@ -1,0 +1,13 @@
+personas:
+
+  viewer:
+    description: "Read-only access, dev environment only"
+    environments: [dev]
+    allowed_tools: [search_kb, read_file]
+    denied_tools: [bash]
+
+  engineer:
+    description: "Full access across dev and staging"
+    environments: [dev, staging]
+    allowed_tools: [search_kb, read_file, bash]
+    denied_tools: []

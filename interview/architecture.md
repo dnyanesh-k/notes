@@ -1,8 +1,8 @@
-Here are **3 architectural views of ARIA** — each answers a different systems-thinking question.
+Here are **3 architectural views of KIRA** — each answers a different systems-thinking question.
 
 ---
 
-## Diagram 1 — System Context (What is ARIA in the bigger picture?)
+## Diagram 1 — System Context (What is KIRA in the bigger picture?)
 
 **Question it answers:** *Who uses it, what does it connect to, and where are the boundaries?*
 
@@ -13,7 +13,7 @@ flowchart TB
         BOT["Automated Workers\n(task queue agents)"]
     end
 
-    subgraph aria ["ARIA Platform"]
+    subgraph KIRA ["KIRA Platform"]
         LAUNCH["Session Launcher\n(SSO identity + secrets + model token)"]
         AGENT["AI Agent Runtime\n(Claude Code)"]
         BRAIN["Local Knowledge Brain\n(cards, playbooks, routing rules)"]
@@ -54,7 +54,7 @@ flowchart TB
 ```
 
 **Systems thinking takeaway:**
-- ARIA is **not just an LLM chatbot** — it is an **orchestrated agent platform**
+- KIRA is **not just an LLM chatbot** — it is an **orchestrated agent platform**
 - The **brain stays local** (versioned, reviewable knowledge)
 - The **LLM is behind a proxy** (auth, cost, routing)
 - **Tools are the action layer**; the model is the reasoning layer
@@ -62,7 +62,7 @@ flowchart TB
 
 ---
 
-## Diagram 2 — RAG & Knowledge Routing (How does ARIA stay grounded?)
+## Diagram 2 — RAG & Knowledge Routing (How does KIRA stay grounded?)
 
 **Question it answers:** *How does a user question become the right playbook before the agent acts?*
 
@@ -122,7 +122,7 @@ flowchart LR
 ```
 
 **Systems thinking takeaway:**
-- ARIA uses **routing RAG**, not “dump whole wiki into prompt”
+- KIRA uses **routing RAG**, not “dump whole wiki into prompt”
 - Flow is: **intent → semantic match → curated knowledge → action**
 - **Multi-phrase indexing** improves short-query matching
 - **Dedup** reduces token waste in long sessions
@@ -205,20 +205,20 @@ flowchart LR
 
 | Diagram | Lens | Think of it as |
 |--------|------|----------------|
-| **1. System Context** | Macro | ARIA’s place in the enterprise ecosystem |
+| **1. System Context** | Macro | KIRA’s place in the enterprise ecosystem |
 | **2. RAG Routing** | Knowledge | How answers stay grounded and relevant |
 | **3. Agent + Guardrails + Eval** | Runtime | How each turn is executed safely and tested |
 
 **One mental model:**
 
-> **Diagram 1** = *where ARIA lives*  
-> **Diagram 2** = *how ARIA knows what to read*  
-> **Diagram 3** = *how ARIA acts safely and improves over time*
+> **Diagram 1** = *where KIRA lives*  
+> **Diagram 2** = *how KIRA knows what to read*  
+> **Diagram 3** = *how KIRA acts safely and improves over time*
 
 ---
 
 ## Interview one-liner for all 3
 
-> "ARIA is a local-first enterprise agent: a launcher sets up identity and secrets, the agent routes questions through semantic search into curated knowledge cards, then executes MCP and CLI tools under persona guardrails, with evals ensuring it searches first and loads the right context before acting."
+> "KIRA is a local-first enterprise agent: a launcher sets up identity and secrets, the agent routes questions through semantic search into curated knowledge cards, then executes MCP and CLI tools under persona guardrails, with evals ensuring it searches first and loads the right context before acting."
 
 Want these exported as a **single revision page** with 5 likely interviewer follow-ups per diagram?
