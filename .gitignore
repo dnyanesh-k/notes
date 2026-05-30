@@ -1,1 +1,7 @@
 /.metadata/
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+brain/index_snapshot.json

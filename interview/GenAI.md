@@ -1,8 +1,6 @@
 # GenAI / LLM Engineer — Generic Interview Prep
 
-> This file covers the general AI/LLM/GenAI concepts asked across companies, independent of any specific project. Read `a.md` first for KIRA-specific depth. Use this file for the conceptual and practical questions that come up regardless of which project you worked on.
->
-> Format: understanding-first with theory and complete sentences, then Q&A with enough depth that answers come from understanding, not memorization.
+> This file covers the general AI/LLM/GenAI concepts asked across companies, independent of any specific project. Read `QnA.md` first for KIRA-specific depth. Use this file for the conceptual and practical questions that come up regardless of which project you worked on.
 
 ---
 
@@ -89,7 +87,13 @@ Hallucination is when an LLM generates text that is factually incorrect but soun
 
 The problem is that likelihood and truth are different things. If a model is asked about an obscure person it has never seen in training data, it will still generate plausible-sounding text about that person — because the pattern of "question about a person → answer with biographical details" is very common in training data. The content will be statistically plausible, but factually invented.
 
-Hallucination is not a bug that can be simply fixed — it is a consequence of how these models work. You manage it rather than eliminate it. The main approaches are: grounding through retrieval (give the model the facts and instruct it to use only those), output validation (check the model's answer against a source), confidence calibration (prompt the model to express uncertainty when it is uncertain), and evals (catch hallucination in testing before it reaches users).
+Hallucination is not a bug that can be simply fixed — it is a consequence of how these models work. You manage it rather than eliminate it. 
+ 
+**The main approaches are:** 
+1. grounding through retrieval (give the model the facts and instruct it to use only those), 
+2. output validation (check the model's answer against a source), 
+3. confidence calibration (prompt the model to express uncertainty when it is uncertain), 
+4. evals (catch hallucination in testing before it reaches users).
 
 ---
 
@@ -432,3 +436,37 @@ The second biggest mistake is treating RAG as a search problem when it is actual
 The fix for both: build a small labeled test set before you build the pipeline. Know what good looks like before you try to build it. Then measure every component — retrieval recall, generation faithfulness, end-to-end correctness — separately, so you can fix the right layer when something is wrong.
 
 ---
+
+
+On Generative AI & RAG Infrastructure
+1. "You mentioned using fastembed and semantic routing. How do you handle chunking strategies when dealing with messy, multi-format enterprise or healthcare documents?"
+
+2. "When deploying a Retrieval-Augmented Generation (RAG) pipeline, how do you measure and optimize for token retrieval latency and LLM context window limits?"
+
+3. "Can you explain a scenario where you implemented Model Context Protocol (FastMCP) to connect an LLM to an external corporate database or enterprise tool? How did you secure the data?"
+
+On Data Engineering & Automation (MLOps)
+1. "You have experience setting up production data pipelines with Argo Workflows. Why choose Argo over tools like Airflow for AI infrastructure, and how do you handle step failures or data retries?"
+
+2. "How do you set up automated guardrails to monitor LLM hallucinations or toxic outputs before they reach the end user in a live environment?"
+
+1. When building autonomous AI assistants or multi-agent workflows using frameworks like FastMCP, how do you handle state management, memory retention, and context sharing when a single user session spans across multiple agent hops?
+
+2. Enterprise LLM calls (like GPT-4o or Claude 3.5) get incredibly expensive at scale. Outside of basic prompt engineering, what concrete strategies would you implement in our pipeline architecture to drastically reduce API token consumption and lower monthly cloud bills?
+
+3. When processing large batches of enterprise files through an LLM API provider, you will inevitably hit strict rate limits (TPM/RPM throttling). How would you design a resilient data ingestion queue to handle rate-limiting gracefully without dropping data?
+
+4. Unlike traditional software where code outputs are predictable, AI outputs change and evolve. How would you design a CI/CD pipeline or testing framework to ensure that updating an underlying LLM prompt or changing an embedding model doesn’t silently degrade the quality of our application?
+
+5. When deploying machine learning scripts or data parsing jobs inside an isolated container orchestrator like Argo Workflows, large image sizes can cause slow 'cold start' delays. How do you optimize your Docker images and Kubernetes nodes to ensure these workflows spin up instantly
+
+6. Out of all the AI systems, pipelines, or automation tools you’ve built recently—what is one specific project or technical challenge where you felt, 'Wow, this was incredibly difficult, but the architecture we built turned out beautifully'? Walk me through what the bottleneck was and how you cracked it."
+
+7. You mentioned building persona-based guardrail systems with session-aware access controls. If an engineer with low-tier clearance tries to bypass your prompt restrictions to access high-tier enterprise tools, how does your system handle token authorization and trigger a 'fail-closed' security action?
+
+8. "When utilizing FastMCP and fastembed for semantic search routing, how do you handle a scenario where a user query is ambiguous, and the router passes it to the wrong agent or tool? How does the pipeline self-correct without crashing the session?
+
+9. You used Argo Workflows to parse error logs and automatically generate Jira/Slack alerts. If the pipeline encounters an unexpected log pattern or structural schema shift, how do you handle exception isolation so the workflow doesn't get jammed?
+
+10. When working with enterprise-grade knowledge-driven AI assistants, how do you balance context compression against accuracy? If you compress user context too aggressively to save on API costs, how do you verify you aren't losing vital information?
+

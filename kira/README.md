@@ -22,7 +22,9 @@ User question
  read_file (built-in tool)            ← reads matched brain/ file
      │
      ▼
- Groq LLM (llama-3.3-70b)            ← generates answer from retrieved content only
+ llm_client.py → LiteLLM gateway      ← unified API to any provider (Groq, OpenAI, …)
+     │
+ Groq / OpenAI / Anthropic            ← swap via LLM_MODEL env var, no code change
      │
  [every tool call]
      │
@@ -35,6 +37,7 @@ User question
 - System prompt lives in `system_prompt.md`, editable without touching code
 - Brain has two card types: knowledge cards (reference) and playbooks (step-by-step procedures)
 - MCP server runs as a real subprocess over stdio — same transport pattern as production
+- **LiteLLM gateway**: all LLM calls go through `llm_client.py` — swap provider with one env var, optional fallback model
 - Hot-reload: a background thread watches `brain/routing.md`; when the file changes it rebuilds the index in the background and atomically swaps the reference — no query ever hits a partial index
 - Mock proxy: evals intercept tool calls and return canned responses from the scenario YAML — the LLM reasoning runs for real, only tool results are faked, making evals fast and deterministic
 
@@ -75,10 +78,22 @@ Every tool call passes through `hooks.py` before execution. It checks three thin
 
 The model never sees this logic — it cannot bypass it by rephrasing its output.
 
-### 6. Mock proxy
-During eval, real tool calls are expensive and non-deterministic. The mock proxy intercepts tool calls at the execution layer in `_agent_loop` and returns pre-defined strings from the scenario YAML instead. The LLM reasoning still runs against real Groq. Only the tool results are faked. This makes evals run in seconds and produce identical results on every run — same input, same tool output, same LLM behaviour.
+### 6. LiteLLM model gateway
+The agent never imports Groq or OpenAI directly. Every LLM call goes through `llm_client.py`, which wraps LiteLLM. This is the same pattern as production ARIA — one internal API, many providers behind it.
 
-### 7. Hard gates vs LLM critic
+Swap models without touching code:
+```bash
+LLM_MODEL=groq/llama-3.3-70b-versatile python run.py    # default
+LLM_MODEL=openai/gpt-4o-mini python run.py              # different provider
+LLM_FALLBACK_MODEL=groq/llama-3.1-8b-instant python run.py  # auto-fallback if primary fails
+```
+
+The agent loop, eval critic, and tool-calling logic stay identical — only the gateway config changes.
+
+### 7. Mock proxy
+During eval, real tool calls are expensive and non-deterministic. The mock proxy intercepts tool calls at the execution layer in `_agent_loop` and returns pre-defined strings from the scenario YAML instead. The LLM reasoning still runs via LiteLLM. Only the tool results are faked. This makes evals run in seconds and produce identical results on every run — same input, same tool output, same LLM behaviour.
+
+### 8. Hard gates vs LLM critic
 Two different kinds of checks serve different purposes:
 
 | | Hard gate | LLM critic |
@@ -97,11 +112,20 @@ A scenario must pass **both** to be considered passing.
 ```bash
 pip install -r requirements.txt
 
-# Get a free API key at https://console.groq.com (no credit card)
-export GROQ_API_KEY=your_key_here        # Mac/Linux
-set GROQ_API_KEY=your_key_here           # Windows CMD
-$env:GROQ_API_KEY = "your_key_here"      # Windows PowerShell
+cp .env.example .env          # Mac/Linux
+copy .env.example .env        # Windows CMD
+Copy-Item .env.example .env   # Windows PowerShell
+
+# Edit .env — set GROQ_API_KEY (free at https://console.groq.com)
 ```
+
+Optional overrides in `.env`:
+```
+LLM_MODEL=groq/llama-3.3-70b-versatile
+LLM_FALLBACK_MODEL=groq/llama-3.1-8b-instant
+```
+
+> Shell env vars override `.env` if both are set. Never commit `.env` — it is in `.gitignore`.
 
 > First run downloads the MiniLM embedding model (~100MB). One-time only, then cached.
 
@@ -113,6 +137,9 @@ $env:GROQ_API_KEY = "your_key_here"      # Windows PowerShell
 python run.py                            # engineer persona, dev environment
 python run.py --persona viewer           # read-only — bash tool is blocked
 python run.py --persona engineer --env staging
+
+# Swap provider — edit .env: set OPENAI_API_KEY and LLM_MODEL=openai/gpt-4o-mini
+python run.py
 ```
 
 **Try these questions:**
@@ -138,7 +165,9 @@ python routing_core.py     # smoke test: search for "deploy service" and see sco
 python hooks.py            # smoke test: prints allow/block decisions for 3 test cases
 python mcp_server.py       # run MCP server standalone (Ctrl+C to stop)
 ```
+
 ---
+
 ## Eval Framework
 
 The eval system tests the full agent loop without a human in the loop. Run all scenarios:
@@ -200,11 +229,13 @@ Add a new scenario by creating `evals/scenarios/your_name.yaml` — no code chan
 ## File structure
 
 ```
-mini-KIRA/
+kira/
+├── .env.example              — copy to .env and set API keys (never commit .env)
 ├── requirements.txt
 ├── system_prompt.md          — agent rules and persona, loaded at runtime
 ├── persona.yaml              — viewer / engineer: allowed tools + environments
-├── run.py                    — entry point: MCP client + Groq agent loop + guardrails
+├── run.py                    — entry point: MCP client + agent loop + guardrails
+├── llm_client.py             — LiteLLM gateway: all LLM calls route through here
 ├── mcp_server.py             — FastMCP server exposing search_kb over stdio
 ├── routing_core.py           — MiniLM embeddings + cosine similarity search
 ├── hooks.py                  — pre-tool authorization: persona × environment × tool
@@ -219,15 +250,18 @@ mini-KIRA/
         ├── deploy_service.yaml
         └── incident_response.yaml
 ```
+
 ---
+
 ## Stack
 
 | Layer | Choice | Why |
 |-------|--------|-----|
 | Embeddings | MiniLM (fastembed) | Small, fast, runs offline on CPU |
 | Similarity | NumPy cosine | Sufficient at this scale, no vector DB needed |
-| MCP | FastMCP (stdio) | Same protocol as production KIRA |
-| LLM | Groq + llama-3.3-70b | Free tier, fast inference, OpenAI-compatible API |
+| MCP | FastMCP (stdio) | Same protocol as production ARIA |
+| LLM gateway | LiteLLM | Unified API — swap Groq/OpenAI via env var |
+| LLM (default) | groq/llama-3.3-70b-versatile | Free tier, fast inference |
 | Guardrails | hooks.py + persona.yaml | Code-enforced, not prompt-based |
 | Eval | Hard gates + LLM critic | Binary behaviour check + semantic quality score |
 | Hot-reload | Background thread + atomic swap | Index stays live during rebuild, zero downtime |

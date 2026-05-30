@@ -1,5 +1,5 @@
 """
-ARIA — entry point.
+ARIA Mini — entry point.
 
 Usage:
     python run.py                        # persona=engineer, env=dev
@@ -7,8 +7,7 @@ Usage:
     python run.py --persona engineer --env staging
 
 Requires:
-    GROQ_API_KEY environment variable set.
-    Get a free key at https://console.groq.com
+    Copy .env.example to .env and set GROQ_API_KEY (or provider key for LLM_MODEL).
 """
 
 from __future__ import annotations
@@ -16,17 +15,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
-from groq import Groq
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 import hooks
+import llm_client
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
 SYSTEM_PROMPT_FILE = Path(__file__).parent / "system_prompt.md"
 
 
@@ -43,8 +40,8 @@ def _load_system_prompt() -> str:
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _mcp_tool_to_groq(tool) -> dict:
-    """Convert an MCP Tool object to OpenAI/Groq function-calling schema."""
+def _mcp_tool_to_schema(tool) -> dict:
+    """Convert an MCP Tool object to OpenAI function-calling schema."""
     schema = tool.inputSchema
     # inputSchema may be a dict or a Pydantic model depending on mcp version
     if hasattr(schema, "model_json_schema"):
@@ -111,10 +108,9 @@ def _divider(char: str = "-", width: int = 55) -> None:
 
 
 async def _agent_loop(
-    groq: Groq,
     session: ClientSession,
     mcp_tool_names: set[str],
-    groq_tools: list[dict],
+    llm_tools: list[dict],
     persona: str,
     environment: str,
     user_input: str,
@@ -143,13 +139,14 @@ async def _agent_loop(
 
     while True:
         step += 1
-        _lg(f"[Step {step}]", f"Calling {GROQ_MODEL}...")
+        model = llm_client.get_agent_model()
+        _lg(f"[Step {step}]", f"Calling {model} via LiteLLM...")
         t0 = time.time()
 
-        response = groq.chat.completions.create(
-            model=GROQ_MODEL,
+        response = llm_client.chat_completion(
+            model=model,
             messages=messages,
-            tools=groq_tools,
+            tools=llm_tools,
             tool_choice="auto",
             max_tokens=2048,
             temperature=0.1,
@@ -255,29 +252,28 @@ async def _agent_loop(
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 async def _build_tools(session: ClientSession) -> tuple[set[str], list[dict]]:
-    """Ask MCP server for its tool list and convert to Groq format.
+    """Ask MCP server for its tool list and convert to OpenAI schema.
     Also appends the built-in read_file tool. Reusable by eval runner."""
     tools_response = await session.list_tools()
     mcp_tool_names = {t.name for t in tools_response.tools}
-    groq_tools = [_mcp_tool_to_groq(t) for t in tools_response.tools]
-    groq_tools.append(READ_FILE_TOOL)
-    return mcp_tool_names, groq_tools
+    llm_tools = [_mcp_tool_to_schema(t) for t in tools_response.tools]
+    llm_tools.append(READ_FILE_TOOL)
+    return mcp_tool_names, llm_tools
 
 
 async def main(persona: str, environment: str) -> None:
-    api_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not api_key:
-        print("\nError: GROQ_API_KEY is not set.")
-        print("  1. Get a free key at https://console.groq.com")
-        print("  2. Set it:  export GROQ_API_KEY=your_key_here")
-        sys.exit(1)
+    llm_client.check_llm_env()
 
-    groq = Groq(api_key=api_key)
+    agent_model = llm_client.get_agent_model()
+    fallback = llm_client.get_fallback_model()
 
     print(f"\n{'═'*57}")
     print(f"  ARIA Mini")
     print(f"  Persona : {persona}  |  Environment : {environment}")
-    print(f"  Model   : {GROQ_MODEL}")
+    print(f"  Gateway : LiteLLM")
+    print(f"  Model   : {agent_model}")
+    if fallback:
+        print(f"  Fallback: {fallback}")
     print(f"{'═'*57}")
     print()
     print("  [Boot] Loading MiniLM model + building routing index...")
@@ -294,7 +290,7 @@ async def main(persona: str, environment: str) -> None:
         async with ClientSession(read, write) as session:
             await session.initialize()
 
-            mcp_tool_names, groq_tools = await _build_tools(session)
+            mcp_tool_names, llm_tools = await _build_tools(session)
 
             # Show routing index size; start hot-reload watcher
             from routing_core import _get_index, start_watcher
@@ -324,10 +320,9 @@ async def main(persona: str, environment: str) -> None:
                     break
 
                 await _agent_loop(
-                    groq=groq,
                     session=session,
                     mcp_tool_names=mcp_tool_names,
-                    groq_tools=groq_tools,
+                    llm_tools=llm_tools,
                     persona=persona,
                     environment=environment,
                     user_input=user_input,

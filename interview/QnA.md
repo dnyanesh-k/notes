@@ -982,7 +982,7 @@ So MCP is not the LLM and not Jira itself â€” it is the middle layer that l
 | Client is usually | Web/mobile app | **AI agent** |
 | Interface is usually | REST/HTTP JSON | **MCP tools protocol** |
 
-### 4. Architecture â€” how MCP fit in KIRA
+### 4. Architecture - how MCP fit in KIRA
 
 ```mermaid
 flowchart TB
