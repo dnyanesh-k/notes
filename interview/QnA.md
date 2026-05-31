@@ -152,7 +152,24 @@ The solution was to embed each trigger in multiple ways:
 At search time, the score for an entry is the **maximum cosine similarity across all its phrase vectors**. This means a short query like "deploy connector" matches directly against the "deploy connector" phrase vector - not competing against a long averaged embedding.
 
 **How cosine similarity is computed:**
-Both the query vector and all indexed vectors are normalized to unit length. The similarity score is simply their dot product - a number between 0 and 1 where values closer to 1 mean more similar meaning. Results below a threshold of 0.44 are filtered out to avoid returning irrelevant cards.
+
+A vector has two properties: **direction** (meaning) and **magnitude** (length — influenced by word count etc.). Only direction matters for semantic similarity. Normalizing to unit length removes magnitude, so every vector has length 1. After that, dot product = cosine of the angle between the two vectors — pure meaning similarity, nothing else.
+
+```
+cos(θ) = (A · B) / (|A| × |B|)
+         after normalization |A|=|B|=1
+       = A · B   (just the dot product)
+```
+
+Score interpretation:
+- **0.9+** → nearly identical meaning
+- **0.7–0.9** → very similar
+- **0.4–0.6** → loosely related
+- **< 0.4** → unrelated — filtered out
+
+**Why 0.44 threshold?** Not mathematically derived — tuned empirically. Run real queries, find the score where wrong cards stop appearing and correct cards still pass, set that as the cutoff. Too low → noisy irrelevant context reaches LLM. Too high → correct cards get dropped. In mini-aria we use 0.40 (slightly more permissive for demo).
+
+In code, all phrase vectors for all entries are compared in one NumPy matrix multiply (`query_vecs @ phrase_vecs.T`) — not a loop. At large scale (millions of chunks) this is replaced by ANN indexes like FAISS, but the math is identical.
 
 **Multi-keyword search:**
 Engineers pass multiple keyword phrases to `search_kb`, not one long string. Each phrase is embedded independently. For each routing entry, the best score across all query keywords is kept. This improves recall when a question touches multiple topics.
@@ -3634,3 +3651,4 @@ For me, staying current isn’t about knowing every new model name - it’s abou
 **Tip if they ask for examples:** mention reading release notes, trying new retrieval/agent patterns in side experiments, and learning from production incidents - that sounds practical, not buzzword-heavy.
 
 ---
+wh
