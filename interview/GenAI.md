@@ -315,27 +315,368 @@ PEFT (Parameter-Efficient Fine-Tuning) is the broader category that includes LoR
 
 ## G17. How do you build a multi-tenant RAG system safely?
 
-Multi-tenancy means multiple companies or users share the same infrastructure but must never see each other's data. In a RAG system, this is primarily a retrieval isolation problem.
+> This is a **system design** question. Follow: **Clarify → Estimate → Design layer by layer → Multi-tenant deep dive → Trade-offs.**
 
-The core requirement is that every retrieval query must be scoped to the requesting user's authorized documents. This is enforced through metadata filtering — every document in the vector index is tagged with a tenant ID, and every search query includes a filter that restricts results to that tenant's documents. This filter runs before the semantic search, not after.
+---
 
-The secondary requirement is that conversation history and session state are isolated per tenant and per user. A shared Redis cache must key on tenant ID and user ID, not just on the query text — otherwise two users from different tenants asking the same question might get each other's cached answers.
+### Step 1: Clarify requirements (ask first)
 
-At the LLM gateway layer, token budgets and rate limits are applied per tenant to prevent one heavy user from crowding out others.
+**Functional:**
+- How many tenants? (10 companies vs 10,000 SaaS customers changes everything)
+- Is each tenant's document corpus fully isolated, or do some docs span tenants?
+- Read-only Q&A, or also tool calls / write actions per tenant?
+- Does chat history persist across sessions?
 
-The architectural principle is: assume the model will retrieve anything it can see. Your job is to ensure it can only see what it is authorized to see — through metadata filters, namespace separation in the vector DB, and row-level access control in the metadata database.
+**Non-functional — state your assumptions:**
+- Zero cross-tenant data leakage — this is non-negotiable
+- Each tenant has its own rate limits and token budget
+- PII must not appear in shared logs or vector indexes
+- 99.9% availability; p95 latency under 5 seconds
+
+**The core safety principle:** assume the model will use whatever context you give it. Your job is to ensure it can **never retrieve another tenant's documents** — not through prompt tricks, but through infrastructure isolation.
+
+---
+
+### Step 2: Estimate scale (brief)
+
+- 500 tenants × 50 concurrent users each = 25K concurrent sessions at peak
+- Assume 1 query every 30 seconds → ~800 QPS
+- With 40% cache hit → ~480 QPS hit retrieval + LLM
+- Each tenant avg 100K document chunks → 50M total chunks in vector DB
+- Storage: 50M × 384 dims × 4 bytes ≈ 75GB vectors — needs a managed vector DB cluster, not a single node
+
+---
+
+### Step 3: Design layer by layer
+
+Walk through the system **top to bottom**. In an interview, draw or speak each layer in this order.
+
+#### Layer 1 — Client
+Web app, mobile app, or internal Slack bot. Every request carries:
+- **Tenant ID** (from SSO / JWT claim — never from user input alone)
+- **User ID** and **role** (viewer, engineer, admin)
+- **Session ID** (for conversation continuity)
+
+The client never sends raw tenant IDs as free text — they come from authenticated tokens.
+
+#### Layer 2 — Load balancer
+An ALB or NGINX layer in front of the API tier. Responsibilities:
+- TLS termination
+- Health checks on API pods
+- Sticky sessions only if needed for WebSocket streaming — otherwise stateless
+- DDoS protection at the edge (WAF / Cloudflare)
+
+At this layer you do **not** do tenant logic — just route traffic to healthy API instances.
+
+#### Layer 3 — API gateway
+This is where auth and first-line policy live. Examples: Kong, AWS API Gateway, or a custom FastAPI middleware layer.
+
+Responsibilities:
+- **Validate JWT** — extract tenant ID, user ID, role from signed token
+- **Reject unauthenticated requests** before they reach any service
+- **Attach tenant context** to every downstream request as headers (`X-Tenant-ID`, `X-User-Role`)
+- **Route** to the correct service version (v1 chat API, v2 agent API)
+- **Rate limiting** — per tenant and per user (see Layer 5)
+
+The gateway is the trust boundary. Nothing downstream should trust client-supplied tenant IDs without gateway validation.
+
+#### Layer 4 — Application layer (stateless, auto-scaled)
+Horizontally scaled **Chat / Agent API** pods — no tenant state stored in memory.
+
+Each pod runs:
+- Session manager (loads conversation history from Redis keyed by `tenant_id + user_id + session_id`)
+- RAG orchestrator (embed query → search → rerank → build prompt)
+- Agent loop (if tool-calling is enabled)
+- Response streaming back to client
+
+Pods are **stateless** — any pod can serve any tenant. Tenant isolation is enforced by **scoped queries**, not by routing to dedicated pods.
+
+#### Layer 5 — Rate limiting and quotas
+Applied at two levels:
+
+**Gateway level (hard limits):**
+- Per tenant: max 1000 requests/minute
+- Per user: max 60 requests/minute
+- Per tenant token budget: max 1M tokens/day
+
+**LLM gateway level (cost control):**
+- LiteLLM or custom proxy tracks token usage per tenant
+- When budget exceeded → return 429 with clear message, not a silent failure
+
+Use a **token bucket** or sliding window in Redis. Key format: `ratelimit:{tenant_id}:{user_id}` — never a global key that mixes tenants.
+
+#### Layer 6 — Message queue (async workloads)
+Not every RAG operation is synchronous. Use a queue (SQS, RabbitMQ, Redis Streams) for:
+
+- **Document ingestion** — tenant uploads a PDF → message queued → worker chunks, embeds, indexes
+- **Bulk re-indexing** — when embedding model changes, re-process all tenant docs asynchronously
+- **Eval runs** — scenario batch jobs off the hot path
+- **Alerting** — failed ingestion, quota exceeded, guardrail block events
+
+Queue messages always carry `tenant_id` as metadata. Workers process one tenant's job at a time with tenant-scoped credentials.
+
+Pattern: synchronous path for user queries (must respond in seconds); async path for anything that takes minutes.
+
+#### Layer 7 — Database and storage instances
+
+This is where multi-tenant isolation matters most. Use **separate logical namespaces**, not one shared flat index.
+
+| Store | Purpose | Tenant isolation |
+|---|---|---|
+| **Vector DB** (Pinecone / pgvector) | Semantic search over document chunks | Metadata filter: `tenant_id = X` on every query — enforced in code, not optional |
+| **Metadata DB** (Postgres) | Document registry, chunk metadata, access ACLs | Row-level security (RLS) or schema-per-tenant |
+| **Redis** | Session history, semantic cache, rate limit counters | Key prefix: `{tenant_id}:{user_id}:...` |
+| **Object storage** (S3) | Raw uploaded documents | Bucket prefix or bucket-per-tenant |
+| **Audit log DB** | Who queried what, guardrail blocks | Partitioned by tenant_id, retention policy per tenant |
+
+**Critical rule for vector search:** the tenant filter is applied **before** the similarity search runs, not after. Post-filtering is unsafe — you might retrieve another tenant's doc and only discard it after the LLM has seen it.
+
+Example query pattern:
+```
+search(
+  query_vector=embed(user_query),
+  filter={"tenant_id": authenticated_tenant_id},  # mandatory
+  top_k=5
+)
+```
+
+#### Layer 8 — LLM gateway (model routing)
+All LLM calls go through a single internal gateway (LiteLLM, custom proxy). Responsibilities:
+- Route to primary or fallback model per tenant tier (free tier → smaller model)
+- Track token usage per tenant for billing
+- Apply per-tenant model allowlist (some tenants may not use certain models)
+- Strip PII from prompts before sending to external providers if required
+
+The agent code never calls OpenAI/Groq directly — same pattern as ARIA production.
+
+#### Layer 9 — Metrics, logging, and monitoring
+
+**Metrics (Datadog / Prometheus):**
+- QPS per tenant, p50/p95 latency per layer (retrieval, LLM, total)
+- Cache hit rate per tenant
+- Token usage and cost per tenant per day
+- Retrieval quality: empty results rate, avg similarity score
+- Guardrail block rate per persona
+- LLM error rate and fallback trigger rate
+
+**Logging (structured, tenant-scoped):**
+- Every log line includes `tenant_id`, `user_id`, `session_id`, `trace_id`
+- Log retrieval results (doc IDs, scores) — not raw document content if PII-sensitive
+- Log tool calls and guardrail decisions
+- **Never log raw prompts or answers** for tenants with data sensitivity requirements
+
+**Monitoring and alerting:**
+- Alert if any tenant's error rate spikes above baseline
+- Alert if cross-tenant query detected (should never happen — treat as security incident)
+- Alert if LLM cost for a tenant exceeds daily budget
+- Dashboard per tenant for support teams
+
+**Eval (quality, not just uptime):**
+- Sample 1–5% of live traffic for LLM-as-judge scoring (grounding, relevance)
+- Full regression eval suite runs on every brain/prompt change before merge
+- Add failing production cases back into eval scenarios
+
+---
+
+### Step 4: Multi-tenant safety deep dive
+
+Three layers of defense — never rely on just one:
+
+1. **Authentication layer** — JWT carries tenant ID; gateway validates it
+2. **Retrieval layer** — mandatory metadata filter on every vector search
+3. **Authorization layer** — persona guardrails block tools/actions the user is not allowed to run
+
+If tenant A's user somehow crafts a query referencing tenant B's document ID, the metadata filter returns nothing — the model never sees tenant B's content.
+
+For the highest isolation requirement (healthcare, finance): consider **separate vector DB namespaces or indexes per tenant** rather than shared index with filters. More expensive, but physically impossible to cross-retrieve.
+
+---
+
+### Step 5: Architecture diagram
+
+```mermaid
+flowchart TB
+    subgraph clients ["Clients"]
+        WEB["Web / Slack / API clients"]
+    end
+
+    subgraph edge ["Edge"]
+        LB["Load Balancer + WAF"]
+        GW["API Gateway\nAuth · Routing · Rate Limit"]
+    end
+
+    subgraph app ["App Layer (stateless pods)"]
+        API["Chat / Agent API"]
+        ORCH["RAG Orchestrator"]
+    end
+
+    subgraph async ["Async Layer"]
+        Q["Message Queue\n(SQS / Redis Streams)"]
+        WORKER["Ingestion Workers\nchunk · embed · index"]
+    end
+
+    subgraph data ["Data Layer (tenant-isolated)"]
+        VDB["Vector DB\nfilter: tenant_id on every query"]
+        PG["Postgres\nRLS · document metadata"]
+        REDIS["Redis\nsessions · cache · rate limits"]
+        S3["Object Storage\nraw documents per tenant"]
+    end
+
+    subgraph llm ["LLM Layer"]
+        PROXY["LLM Gateway\nLiteLLM · quotas · routing"]
+        MODELS["Model Providers"]
+    end
+
+    subgraph obs ["Observability"]
+        MET["Metrics · Logs · Alerts"]
+        EVAL["Eval sampling · regression suite"]
+    end
+
+    WEB --> LB --> GW --> API --> ORCH
+    ORCH --> VDB
+    ORCH --> REDIS
+    ORCH --> PROXY --> MODELS
+    GW --> Q --> WORKER --> VDB
+    WORKER --> S3
+    WORKER --> PG
+    API --> MET
+    ORCH --> EVAL
+```
+
+---
+
+### Step 6: Trade-offs
+
+| Decision | Option A | Option B | When to pick |
+|---|---|---|---|
+| Tenant isolation | Shared index + metadata filter | Separate index per tenant | Filter is fine for most SaaS; separate index for regulated data |
+| Session storage | Redis (fast, ephemeral) | Postgres (durable) | Redis for chat; Postgres if audit trail required |
+| Ingestion | Sync (simple) | Async queue (scalable) | Queue once tenants upload more than a few docs/day |
+| Rate limiting | Gateway only | Gateway + LLM proxy | Both — gateway for QPS, proxy for token budget |
+
+**One sentence to close:** "Multi-tenant RAG safety is a retrieval isolation problem first — enforce tenant scope at the gateway, the vector query, and the cache key, then add observability so you can prove isolation holds in production."
 
 ---
 
 ## G18. What is LangGraph and when would you use it over a simple agent loop?
 
-LangGraph is a framework for building stateful, multi-step agent workflows as directed graphs. Each node in the graph is a step (an LLM call, a tool call, a decision), and edges define the flow between steps — including conditional branching and loops.
+Both patterns run an LLM that calls tools in a loop. The difference is **who controls the flow** — the model decides every step (simple loop), or you encode the flow as an explicit graph (LangGraph).
 
-A simple agent loop (think-tool-observe-repeat) works well for open-ended tasks where you don't know the exact sequence of steps in advance. LangGraph is better when the workflow has a known structure with branching logic — for example, "if the issue is a retrieval failure, go to step A; if it is a generation failure, go to step B." LangGraph lets you encode that structure explicitly rather than letting the LLM decide the flow each time.
+---
 
-LangGraph is also well-suited for human-in-the-loop workflows — where certain steps require user approval before proceeding — because state is persisted between steps and the graph can pause and resume.
+### What a simple agent loop is
 
-The tradeoff: LangGraph adds structure and predictability at the cost of flexibility. For highly dynamic, open-ended agent tasks, a simple loop where the model decides everything is often more capable. For workflows with known decision points and compliance requirements, LangGraph is the right tool.
+A simple loop (ReAct pattern — see G14) looks like this:
+
+```
+while not done:
+    LLM thinks → decides tool or answer → tool runs → result added to context → repeat
+```
+
+The model decides **everything** — which tool to call, when to stop, whether to retry. The code is ~50 lines: message history, LLM call, tool execution, append result. ARIA and the KIRA POC use this pattern.
+
+**Strengths:** flexible, handles open-ended tasks, easy to debug (full transcript visible), minimal framework overhead.
+
+**Weaknesses:** flow is unpredictable, hard to enforce mandatory steps, no built-in pause/resume, branching logic lives in the prompt (fragile).
+
+---
+
+### What LangGraph is
+
+LangGraph models an agent workflow as a **directed graph**:
+
+- **Nodes** = steps (LLM call, tool call, human approval, conditional check)
+- **Edges** = transitions between steps (fixed or conditional)
+- **State** = a shared object passed between nodes (messages, retrieved docs, user approval flag, retry count)
+
+```mermaid
+flowchart LR
+    START --> ROUTE
+    ROUTE -->|"retrieval needed"| SEARCH
+    ROUTE -->|"direct answer"| GENERATE
+    SEARCH --> READ
+    READ --> GENERATE
+    GENERATE --> CHECK
+    CHECK -->|"quality ok"| END
+    CHECK -->|"retry"| SEARCH
+    CHECK -->|"human review"| HUMAN
+    HUMAN --> GENERATE
+```
+
+Each node receives the current state, does its work, and returns an updated state. The graph engine decides which node runs next based on edges — not the LLM's free-form decision.
+
+---
+
+### Side-by-side comparison
+
+| | Simple agent loop | LangGraph |
+|---|---|---|
+| Who controls flow | LLM decides each step | You define graph structure |
+| Mandatory steps | Enforced via prompt (soft) | Enforced via graph edges (hard) |
+| Branching | Model improvises | Explicit conditional edges |
+| Human-in-the-loop | Manual to implement | Built-in pause/resume on a node |
+| State persistence | You manage message list | Framework manages state object |
+| Debugging | Read transcript | Inspect state at each node |
+| Best for | Open-ended, dynamic tasks | Known workflows with compliance steps |
+| Complexity | Low (~50 lines) | Higher (graph definition, state schema) |
+| ARIA / KIRA POC | ✅ what we use | Not needed at current scale |
+
+---
+
+### When LangGraph is the right choice
+
+Use LangGraph when the workflow has a **known structure with decision points you must enforce in code**, not in prompts:
+
+**Example 1 — Compliance workflow:**
+```
+Classify ticket → if P0: notify on-call → retrieve runbook → generate response → human approval → send
+                              if P3: retrieve FAQ → generate response → send (no approval needed)
+```
+You cannot rely on the LLM to always call `notify_on-call` for P0 tickets — the graph enforces it.
+
+**Example 2 — Multi-step RAG with quality gate:**
+```
+Embed query → search vector DB → if score < threshold: fallback to keyword search
+           → rerank → if top result score still low: return "I don't know"
+           → generate answer → LLM critic scores → if score < 75: retry with broader search
+```
+Each gate is a conditional edge, not a hope that the prompt instructs the model correctly.
+
+**Example 3 — Human-in-the-loop:**
+A node pauses the graph, sends the draft response to a reviewer, waits for approval or edit, then resumes. Simple loops have no native pause — you'd build this yourself with state storage and polling.
+
+---
+
+### When a simple loop is better
+
+Stick with a simple loop when:
+- The task is open-ended — "answer this engineer's question however you need to"
+- The exact sequence of steps is not known in advance
+- You are prototyping or the team is small (ARIA's situation)
+- Mandatory behavior is enforced by **hard gates in eval** rather than graph structure
+- Adding LangGraph would mean more framework complexity than the problem warrants
+
+ARIA uses a simple loop because the agent's job is open-ended investigation — search knowledge, read cards, call external tools as needed. The mandatory `search_kb first` rule is enforced by the system prompt + eval hard gates, not by a graph edge. That is a valid and simpler design for that use case.
+
+---
+
+### How you would migrate from simple loop to LangGraph
+
+If ARIA grew to need structured workflows (e.g. mandatory incident response steps for P0), the migration path would be:
+
+1. Identify the steps that **must** happen in order — not optional
+2. Define a state schema: `{messages, retrieved_cards, severity, human_approved, retry_count}`
+3. Convert each mandatory step to a graph node
+4. Add conditional edges for branching (severity level, quality score)
+5. Keep the simple loop for open-ended queries; use LangGraph for structured playbooks
+
+You would not replace the entire agent — you would use LangGraph for specific workflow types and keep the simple loop for general Q&A.
+
+---
+
+### One sentence to close
+
+"Simple loop when the model should decide the path; LangGraph when the business requires specific steps to always happen in a specific order — especially when compliance, human approval, or quality gates must be enforced in code, not in prompts."
 
 ---
 
