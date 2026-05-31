@@ -77,6 +77,7 @@ KIRA solved this by making an AI agent that could **understand a user's question
 
 The key constraint was that KIRA runs **locally on each engineer's machine**, not as a cloud SaaS. This shaped almost every technical decision - the knowledge is a local file, the embedding model runs offline, the MCP server is a local process. This keeps it fast, private, and easy to update via git pull.
 
+KIRA runs locally by design — each engineer runs it on their machine against local brain files. That's intentional: private, no cloud cost, fast to update via git pull. But I understand the production deployment pattern well — I'd containerize with Docker, bake the embedding model into the image, inject LLM keys via K8s Secrets, deploy stateless pods with HPA, run evals in CI before every release, and rollback with kubectl rollout undo. The local-first decision was deliberate for this tool; at scale I'd move it to the same cloud pattern I described
 ---
 
 ## 2. KIRA End-to-End Flow
