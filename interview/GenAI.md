@@ -730,15 +730,215 @@ Most importantly, I build small experiments when something seems relevant — te
 
 ## G22b. How Would You Containerize and Deploy an AI Service?
 
-Containerizing an AI service follows the same pattern as any other service, with a few AI-specific considerations. The application — typically a FastAPI server wrapping the RAG pipeline and LLM calls — is packaged into a Docker image. The image pins the Python version, installs dependencies from a requirements file, and copies the application code. The entry point starts the server.
+> **Question type:** practical system design + DevOps for AI. Walk through in order: **what you're containerizing → Dockerfile → build/push → K8s deploy → CI/CD → AI-specific concerns → verify/rollback.**
 
-The AI-specific considerations: embedding models are large files (100MB to several GB). You do not want to download them at container startup — they should either be baked into the image or mounted from a volume at runtime. If you bake them in, your image is large but startup is fast and deterministic. If you mount them, your image is smaller but you need to manage the volume lifecycle.
+Same core idea as any backend service — package code, run in containers, deploy to Kubernetes — but AI adds **large models, secrets for LLM keys, eval gates in CI, and stateless pods with session in Redis**.
 
-For deployment, Kubernetes is the standard at any company running at scale. The AI service runs as a Deployment with a specified number of replicas. A Horizontal Pod Autoscaler watches CPU or request queue depth and scales replicas up and down automatically. Services are exposed through a Kubernetes Service, and traffic enters through an Ingress or API Gateway.
+---
 
-The deployment pipeline matters too. In CI (GitHub Actions or similar), every pull request triggers: linting, unit tests, eval suite against mocked external systems. On merge to main, a new Docker image is built, tagged with the commit SHA, pushed to a container registry, and a rolling deployment updates the Kubernetes pods one by one — so there is no downtime during a release.
+### Step 1: Clarify what you're deploying
 
-The key thing to mention in an interview: stateless application tier is what makes all of this work cleanly. Session state lives in Redis, not in the pod. So any pod can be killed and replaced without losing a user's session.
+Ask (or state assumptions):
+
+- **What is the unit?** RAG API only, full agent (LLM + MCP tools), or batch ingestion worker?
+- **Sync or async?** Real-time chat (needs streaming + low latency) vs batch indexing (queue-based)?
+- **State?** Session history in Redis/Postgres — **not** in the pod
+- **Secrets?** `GROQ_API_KEY`, `OPENAI_API_KEY` — never baked into the image
+
+For KIRA-style agent: one container runs the **chat/agent API**; MCP servers can be **sidecars** or **separate services** depending on scale. POC runs MCP as a local subprocess — production would either keep that in-process or split it out.
+
+---
+
+### Step 2: Dockerfile (multi-stage, AI-aware)
+
+**Goals:** pin Python version, cache dependency layer, bake embedding model (or mount it), expose health endpoint, run as non-root.
+
+```dockerfile
+# Stage 1 — build dependencies
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt -t /deps
+
+# Stage 2 — runtime (smaller image)
+FROM python:3.11-slim
+WORKDIR /app
+RUN useradd -m appuser
+COPY --from=builder /deps /usr/local/lib/python3.11/site-packages
+COPY . .
+
+# AI-specific: pre-download embedding model at build time (not on every pod start)
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')"
+
+USER appuser
+EXPOSE 8080
+HEALTHCHECK CMD curl -f http://localhost:8080/health || exit 1
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+**Why multi-stage:** keeps final image smaller — faster pull, faster cold start on K8s/Argo nodes.
+
+**AI trade-off — model in image vs volume:**
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Baked in image** | Fast, deterministic startup; no network fetch | Larger image (~100MB–2GB+) |
+| **Mounted volume / init container** | Smaller image | Volume lifecycle, version drift across pods |
+
+For MiniLM (~100MB): bake it in. For large models: shared volume or model server.
+
+---
+
+### Step 3: Build, tag, and push
+
+```bash
+docker build -t my-ai-service:latest .
+docker tag my-ai-service:latest registry.company.com/my-ai-service:$(git rev-parse --short HEAD)
+docker push registry.company.com/my-ai-service:$(git rev-parse --short HEAD)
+```
+
+**Always tag with git SHA** — you need to know exactly which code + prompt + brain version is running when debugging a bad answer.
+
+Secrets stay out of the image. Use `.env` locally (never committed); in prod use **K8s Secrets** or a secret manager (Vault, AWS Secrets Manager).
+
+---
+
+### Step 4: Kubernetes deployment
+
+Minimal production layout:
+
+```
+Ingress / API Gateway
+       ↓
+   Service (ClusterIP)
+       ↓
+   Deployment (N replicas, HPA)
+       ↓
+   Pods: app container [+ optional MCP sidecar]
+       ↓
+   Secrets (LLM keys) · Redis (sessions) · Vector DB · Postgres
+```
+
+**Deployment essentials:**
+
+- **Replicas + HPA** — scale on CPU or custom metric (request queue depth)
+- **Liveness probe** — restart pod if process hung
+- **Readiness probe** — stop sending traffic until app + embedding index are ready
+- **Resource limits** — CPU/memory; embedding load can spike RAM
+- **Rolling update** — `maxUnavailable: 0` so no downtime during deploy
+
+```yaml
+# Simplified — key ideas only
+env:
+  - name: GROQ_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: llm-secrets
+        key: groq-api-key
+  - name: LLM_MODEL
+    value: "groq/llama-3.3-70b-versatile"
+livenessProbe:
+  httpGet: { path: /health, port: 8080 }
+readinessProbe:
+  httpGet: { path: /ready, port: 8080 }   # returns 200 only after index is built
+```
+
+**Stateless rule:** chat history and rate-limit counters live in **Redis**, keyed by `tenant_id + user_id + session_id`. Any pod can serve any request — kill and replace pods freely.
+
+---
+
+### Step 5: CI/CD pipeline
+
+```
+PR opened
+  → lint + unit tests
+  → eval suite (mock proxy + hard gates + LLM critic)   ← AI-specific gate
+  → block merge if eval fails
+
+Merge to main
+  → docker build (tag = commit SHA)
+  → push to registry
+  → rolling deploy to staging
+  → smoke eval on staging
+  → promote to prod (manual approval or canary)
+```
+
+**Why eval in CI matters for AI:** traditional tests check deterministic code paths. Prompt or routing changes can silently degrade answer quality — eval suite catches that before prod.
+
+POC today: `python evals/run_evals.py` with mock proxy — same pattern would run in GitHub Actions on every PR.
+
+---
+
+### Step 6: AI-specific production concerns
+
+**1. Embedding index freshness**
+- Ingestion (chunk → embed → index) runs **async** off the hot path — message queue + workers
+- Use **atomic index swap** (build new index → swap reference) — same pattern as KIRA hot-reload, but at scale with versioned indexes
+
+**2. LLM gateway**
+- All model calls through **LiteLLM-style proxy** inside the cluster — not direct to Groq/OpenAI from every pod
+- Central place for quotas, routing, fallback, cost tracking
+
+**3. MCP / tool servers**
+- POC: MCP server as stdio subprocess in same process tree
+- Prod options: sidecar container in same pod, or separate Deployment per tool domain (Jira MCP, AWS MCP)
+- Guardrails (`hooks.py` / policy engine) run **before** tool execution — in prod this is middleware, not prompt-only
+
+**4. Streaming**
+- Expose **SSE or WebSocket** from the API — don't buffer full LLM response before returning
+- Ingress must not timeout long-lived connections
+
+**5. Observability**
+- Log: `tenant_id`, `trace_id`, tool call sequence, retrieval scores — **not** raw prompts if PII-sensitive
+- Metrics: p95 latency (retrieval vs LLM), cache hit rate, token cost per tenant, eval sample scores
+
+---
+
+### Step 7: Verify and rollback
+
+After every deploy:
+
+```bash
+kubectl rollout status deployment/my-ai-service
+kubectl get pods -l app=my-ai-service          # all Running
+curl https://service-url/health                   # 200
+# run 2–3 golden eval queries against staging/prod
+```
+
+If broken:
+
+```bash
+kubectl rollout undo deployment/my-ai-service
+kubectl rollout status deployment/my-ai-service
+```
+
+Never debug a bad AI answer in prod without knowing **which image SHA and which brain/routing version** was live.
+
+---
+
+### Step 8: Tie to KIRA / POC (what you can say honestly)
+
+| Piece | POC today | Production |
+|-------|-----------|------------|
+| Secrets | `.env` + `llm_client.py` | K8s Secrets + LiteLLM gateway |
+| Embeddings | Download on first run | Baked into image or shared volume |
+| MCP | stdio subprocess | Sidecar or separate service |
+| Eval before deploy | Manual `run_evals.py` | CI gate on every PR |
+| Deploy | Local `python run.py` | Docker → K8s rolling deploy |
+| Health check | N/A | `/health` + `/ready` endpoints |
+| Session | Fresh each run | Redis |
+
+> "The POC proves the agent logic — routing, guardrails, eval framework. Production wraps the same code in a container, bakes the embedding model, injects secrets from K8s, runs evals in CI, and deploys with rolling updates and instant rollback."
+
+---
+
+### Trade-offs (close with one of these)
+
+- **Large image with model baked in** vs **small image + slow first request** — pick based on cold-start SLA
+- **Single container (app + MCP)** vs **sidecars** — simpler vs independently scalable tool servers
+- **Sync deploy after eval pass** vs **canary + sampled LLM judge in prod** — speed vs safety
+
+**One-liner:** *"Containerize the app, bake or mount the embedding model, inject LLM keys via secrets, deploy stateless pods behind K8s with health probes, run evals in CI before every release, and rollback with one kubectl command."*
 
 ---
 
