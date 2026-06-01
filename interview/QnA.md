@@ -167,7 +167,7 @@ Score interpretation:
 - **0.4–0.6** → loosely related
 - **< 0.4** → unrelated — filtered out
 
-**Why 0.44 threshold?** Not mathematically derived — tuned empirically. Run real queries, find the score where wrong cards stop appearing and correct cards still pass, set that as the cutoff. Too low → noisy irrelevant context reaches LLM. Too high → correct cards get dropped. In mini-aria we use 0.40 (slightly more permissive for demo).
+**Why 0.44 threshold?** Not mathematically derived — tuned empirically. Run real queries, find the score where wrong cards stop appearing and correct cards still pass, set that as the cutoff. Too low → noisy irrelevant context reaches LLM. Too high → correct cards get dropped. In kira we use 0.40 (slightly more permissive for demo).
 
 In code, all phrase vectors for all entries are compared in one NumPy matrix multiply (`query_vecs @ phrase_vecs.T`) — not a loop. At large scale (millions of chunks) this is replaced by ANN indexes like FAISS, but the math is identical.
 
