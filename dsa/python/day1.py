@@ -134,6 +134,37 @@ def rotate_right(nums,k):
 
     return nums
 
+# nums = [1, 2, 3, 4, 5]
+# new_nums = rotate_right(nums,2)
+# print(new_nums)
+
+# ==============================================================================================
+def target_sum1(nums,target):
+    n = len(nums)
+    result = []
+    
+    # range(start, stop, step)
+    for i in range(n):
+        for j in range(i+1,n):
+            if nums[i]+nums[j] == target:
+                result.append((nums[i],nums[j]))
+            
+    return result
+
+def target_sum(nums,target):
+    seen = set()
+    result = []
+
+    for num in nums:
+        complement = target - num
+
+        if complement in seen:
+            result.append((complement,num))
+
+        seen.add(num)    
+    return result
+
 nums = [1, 2, 3, 4, 5]
-new_nums = rotate_right(nums,2)
-print(new_nums)
+target = 7
+print(target_sum(nums=nums,target=target))
+# Time = O(n2)
