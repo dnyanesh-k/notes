@@ -166,5 +166,39 @@ def target_sum(nums,target):
 
 nums = [1, 2, 3, 4, 5]
 target = 7
-print(target_sum(nums=nums,target=target))
+# print(target_sum(nums=nums,target=target))
 # Time = O(n2)
+# =======================================================================================================
+
+def merge_sorted_lists(nums1, nums2):
+    # 1.create pointers for both lists
+    i = j = 0
+    # store merged elements
+    result = []
+    
+    # 2.compare elements at both pointers
+    # continue until one list is exhausted
+    while i < len(nums1) and j<len(nums2):
+        # if current ele in nums1 is smaller, add it
+        if nums1[i]<=nums2[j]:
+            result.append(nums1[i])
+            # move nums1 pointer forward
+            i += 1
+        else:
+            # otherwise add ele from nums2
+            result.append(nums2[j])
+            # move nums2 pointer forward
+            j += 1
+
+    # add remaining elements from nums1 if any
+    result.extend(nums1[i:]) 
+
+    # add remaining ele from nums2 if any
+    result.extend(nums2[j:])       
+
+    return result
+
+nums1 = [1, 3, 5]
+nums2 = [2, 4, 6]
+result = merge_sorted_lists(nums1, nums2)
+print(result)
