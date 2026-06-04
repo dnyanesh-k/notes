@@ -164,7 +164,7 @@ def target_sum(nums,target):
         seen.add(num)    
     return result
 
-nums = [1, 2, 3, 4, 5]
+# nums = [1, 2, 3, 4, 5]
 target = 7
 # print(target_sum(nums=nums,target=target))
 # Time = O(n2)
@@ -198,7 +198,54 @@ def merge_sorted_lists(nums1, nums2):
 
     return result
 
-nums1 = [1, 3, 5]
-nums2 = [2, 4, 6]
-result = merge_sorted_lists(nums1, nums2)
-print(result)
+# nums1 = [1, 3, 5]
+# nums2 = [2, 4, 6]
+# result = merge_sorted_lists(nums1, nums2)
+# print(result)
+# ==========================================================================================================
+
+def most_frequent1(nums):
+    max_count = 0
+    result = None
+
+    # check frequency of every element
+    for i in range(len(nums)):
+        count = 0
+
+        # count occurrences of nums[i]
+        for j in range(len(nums)):
+            if nums[i] == nums [j]:
+                count +=1
+
+        # update answer if current element has higher frequency
+        if count > max_count:
+            max_count = count
+            result = nums[i]        
+    return result
+
+def most_frequent(nums):
+    # store frequency of each element
+    freq = {}
+
+    # count occurences of every element
+    for num in nums:
+        freq[num] = freq.get(num,0)+1
+
+    max_count = 0
+    result = None
+
+    # find element with maximum freq
+    for num, count in freq.items():
+
+        # update answer if higher freq is found
+        if count > max_count:
+            max_count = count
+            result = num 
+    
+    # max_count = max(freq.values())
+    result = [ num for num, count in freq.items() if count == max_count]       
+
+    return result           
+
+nums = [1, 2, 3, 4, 5, 4, 3, 2, 2, 3]
+print(most_frequent(nums=nums))
