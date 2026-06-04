@@ -113,30 +113,155 @@
 ### Section 1 — Basics & Filtering (Q1-10)
 
 **Q1.** Select all employees in department 'Engineering' with salary > 80000
+```sql
+SELECT * FROM emp
+WHERE department = 'Engineering'
+AND salary > 80000;
+```
 **Q2.** Find all machines that have NOT sent data in the last 7 days
-**Q3.** Select top 5 highest paid employees per department
-**Q4.** Find employees whose name starts with 'A' and ends with 'n'
-**Q5.** Select distinct departments from employees table
-**Q6.** Find all orders placed in Q1 2024 (Jan-Mar)
-**Q7.** Get employees where manager_id IS NULL (top level managers)
-**Q8.** Find products where price is between 100 and 500 AND stock > 0
-**Q9.** Select all records where email domain is 'gmail.com'
-**Q10.** Find duplicate email addresses in users table
+```sql
 
+```
+**Q3.** Select top 5 highest paid employees per department
+```sql
+SELECT e1.employee_name, e1.department_id, e1.salary 
+FROM employees e1 
+WHERE ( 
+    SELECT COUNT(DISTINCT e2.salary) 
+    FROM employees e2 
+    WHERE e2.department_id = e1.department_id 
+    AND e2.salary >= e1.salary 
+    ) <= 5 
+ORDER BY e1.department_id, e1.salary DESC;
+```
+**Q4.** Find employees whose name starts with 'A' and ends with 'n'
+```sql
+SELECT first_name
+FROM emp
+WHERE first_name like 'A%n'
+```
+**Q5.** Select distinct departments from employees table
+```sql
+SELECT DISTINCT(department)
+FROM emp;
+```
+**Q6.** Find all orders placed in Q1 2024 (Jan-Mar)
+```sql
+SELECT order_id
+FROM orders
+WHERE order_date between '2024-01-01' and '2024-03-31'
+```
+**Q7.** Get employees where manager_id IS NULL (top level managers)
+```sql
+SELECT emp_id 
+FROM emp
+WHERE manager_id IS NULL;
+
+```
+**Self-reporting managers**
+```sql
+SELECT emp_id
+FROM emp
+WHERE manager_id = emp_id;
+```
+**Q8.** Find products where price is between 100 and 500 AND stock > 0
+```sql
+SELECT product_name
+FROM products
+WHERE price BETWEEN 100 AND 500
+AND stock > 0
+```
+**Q9.** Select all records where email domain is 'gmail.com'
+```sql
+SELECT email
+FROM users
+WHERE email like '%@gmail.com'
+```
+**Q10.** Find duplicate email addresses in users table
+```sql
+SELECT email, COUNT(email), email_count
+FROM users
+GROUP BY email
+HAVING COUNT(email) > 1; 
+```
 ---
 
 ### Section 2 — Aggregations & GROUP BY (Q11-20)
 
 **Q11.** Count employees per department, show only departments with more than 10 employees
+```sql
+SELECT department, COUNT(emp_id) as emp_count
+FROM emp
+GROUP BY department
+HAVING COUNT(emp_id) > 10
+```
 **Q12.** Find average, min, max salary per department ordered by avg salary desc
+```sql
+SELECT 
+dept, 
+AVG(salary) as avarage_salary, 
+MIN(salary) as min_salary, 
+MAX(salary) as max_salary
+FROM emp
+GROUP BY dept
+ORDER BY avarage_salary DESC
+```
 **Q13.** Count total orders and total revenue per customer
+```sql
+SELECT 
+customer_id,
+COUNT(order_id)as total_orders, 
+SUM(order_amount) as total_revenue
+FROM orders 
+GROUP BY customer_id;
+```
 **Q14.** Find machines with more than 5 error events in last 30 days
+```sql
+
+```
+
 **Q15.** Get daily count of sensor readings for last 7 days
+```sql
+
+```
 **Q16.** Find the department with highest total salary bill
+```sql
+SELECT 
+department,
+SUM(salary) as total_salary
+FROM emp
+GROUP BY department
+ORDER BY total_salary DESC
+LIMIT 1
+```
 **Q17.** Count employees hired per year, ordered by year
+```sql
+SELECT 
+COUNT(emp_id) as total_hires,
+EXTRACT(YEAR FROM doj) as hire_year
+FROM emp
+GROUP BY EXTRACT(YEAR FROM doj)
+ORDER BY hire_year desc;
+```
 **Q18.** Find products with total sales quantity > 1000 units
+```sql
+SELECT
+product_id,
+SUM(sold_quantity) as sales_quantity
+FROM products
+GROUP BY product_id
+HAVING sales_quantity > 1000
+```
 **Q19.** Get hourly average temperature per machine for today
 **Q20.** Find customers who have placed more than 3 orders in last month
+```sql
+SELECT
+user_id
+FROM orders
+WHERE order_date >= CURRENT_DATE - INTERVAL '1 Month'
+GROUP BY user_id
+HAVING COUNT(order_id) > 3
+```
 
 ---
 
