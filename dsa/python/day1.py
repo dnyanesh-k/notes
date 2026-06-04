@@ -101,9 +101,39 @@ nested_list = [[1,2],[3,[4,5]]]
 # print(flatten_list(nested_list=nested_list))
 
 # ================================================================================================================
-def rotate_right(nums, k):
+def rotate_right1(nums, k):
     if not nums:
         return nums
-    return None
+    
+    k = k % len(nums)
+    
+    for _ in range(k):
+        last = nums.pop()
+        nums.insert(0,last)
+    return nums
+
+def rotate_right(nums,k):
+    if not nums:
+        return nums
+    
+    n = len(nums)
+    k = k % n
+
+    def reverse(arr, left, right):
+        while(left < right):
+            arr[left], arr[right] = arr[right], arr[left]
+            left+=1
+            right-=1
+
+    reverse(nums, 0, n-1)
+    print('1',nums)
+    reverse(nums, 0, k-1)
+    print('2',nums)
+    reverse(nums,k, n-1)
+    print('3',nums)        
+
+    return nums
 
 nums = [1, 2, 3, 4, 5]
+new_nums = rotate_right(nums,2)
+print(new_nums)
