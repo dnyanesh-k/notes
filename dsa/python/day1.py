@@ -276,3 +276,28 @@ people = [
 ]
 
 print(sort_by_key(people, "age"))
+
+# =======================================================================
+def group_by_first_letter(words):
+    # create a hashmap
+    map = {}
+    for word in words:
+        # get the first letter
+        first_letter = word[0]
+        # create a list if dont exist
+        if first_letter not in map:
+            map[first_letter] = []
+
+        map[first_letter].append(word)    
+    return map
+
+
+words = ["apple", "ant", "banana", "bat", "cat"]
+
+#  OUTPUT
+# {
+#     'a': ['apple', 'ant'],
+#     'b': ['banana', 'bat'],
+#     'c': ['cat']
+# }
+print(group_by_first_letter(words))
