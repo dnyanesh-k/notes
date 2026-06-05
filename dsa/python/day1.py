@@ -247,5 +247,32 @@ def most_frequent(nums):
 
     return result           
 
-nums = [1, 2, 3, 4, 5, 4, 3, 2, 2, 3]
-print(most_frequent(nums=nums))
+# nums = [1, 2, 3, 4, 5, 4, 3, 2, 2, 3]
+# print(most_frequent(nums=nums))/
+#==========================================================================
+
+def sort_by_key1(data, key):
+    # traverse the list
+    for i in range(len(data)):
+
+        # compare adjacent elements
+        for j in range(len(data) - 1 - i):
+            # if current elements key is greater, swap them
+            if data[j][key] > data[j+1][key]:
+                data[j], data[j+1] = data[j+1], data[j]
+
+    return data
+
+def sort_by_key(data, key):
+    # sort the list using specified dictionary key
+    sorted_data = sorted(data, key=lambda item:item[key])
+    return sorted_data
+
+
+people = [
+    {"name": "John", "age": 30},
+    {"name": "Alice", "age": 25},
+    {"name": "Bob", "age": 35}
+]
+
+print(sort_by_key(people, "age"))
