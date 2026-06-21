@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Design Interview Framework</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+
+  .header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.5px;
+  }
+
+  .header p {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 6px;
+  }
+
+  .trigger-box {
+    background: linear-gradient(135deg, #1e3a5f, #1a2744);
+    border: 1px solid #2d4a7a;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 28px;
+    text-align: center;
+  }
+
+  .trigger-box .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #60a5fa;
+    margin-bottom: 8px;
+  }
+
+  .trigger-box .flow {
+    font-size: 15px;
+    font-weight: 600;
+    color: #93c5fd;
+    letter-spacing: 0.5px;
+  }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .step {
+    background: #1a1f2e;
+    border: 1px solid #2a3044;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #2a3044;
+  }
+
+  .step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .step-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f1f5f9;
+    flex: 1;
+  }
+
+  .step-time {
+    font-size: 11px;
+    color: #475569;
+    background: #0f1117;
+    padding: 3px 8px;
+    border-radius: 20px;
+  }
+
+  .step-body {
+    padding: 14px 16px;
+  }
+
+  .step-tip {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 10px;
+    font-style: italic;
+  }
+
+  .questions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .question {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 12.5px;
+    color: #cbd5e1;
+    line-height: 1.5;
+  }
+
+  .question::before {
+    content: "→";
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .question strong {
+    color: #e2e8f0;
+  }
+
+  /* Step colors */
+  .step-1 .step-num { background: #1e3a5f; color: #60a5fa; }
+  .step-1 .step-header { border-left: 3px solid #3b82f6; }
+
+  .step-2 .step-num { background: #1a3a2a; color: #4ade80; }
+  .step-2 .step-header { border-left: 3px solid #22c55e; }
+
+  .step-3 .step-num { background: #3a2a1a; color: #fb923c; }
+  .step-3 .step-header { border-left: 3px solid #f97316; }
+
+  .step-4 .step-num { background: #2a1a3a; color: #c084fc; }
+  .step-4 .step-header { border-left: 3px solid #a855f7; }
+
+  .step-5 .step-num { background: #3a1a1a; color: #f87171; }
+  .step-5 .step-header { border-left: 3px solid #ef4444; }
+
+  .divider {
+    height: 1px;
+    background: #2a3044;
+    margin: 8px 0;
+  }
+
+  .sub-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #475569;
+    margin: 10px 0 6px;
+  }
+
+  .golden-rules {
+    margin-top: 28px;
+    background: #1a1f2e;
+    border: 1px solid #2a3044;
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .golden-rules h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #fbbf24;
+    margin-bottom: 12px;
+  }
+
+  .rule {
+    display: flex;
+    gap: 8px;
+    font-size: 12.5px;
+    color: #94a3b8;
+    margin-bottom: 8px;
+    line-height: 1.5;
+  }
+
+  .rule span {
+    color: #fbbf24;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: #334155;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>System Design Interview Framework</h1>
+  <p>Universal pattern — works for any system design question</p>
+</div>
+
+<div class="trigger-box">
+  <div class="label">Mental Trigger — Say This First</div>
+  <div class="flow">Clarify → Scope → HLD → Deep Dive → Scale & Trade-offs</div>
+</div>
+
+<div class="steps">
+
+  <!-- Step 1 -->
+  <div class="step step-1">
+    <div class="step-header">
+      <div class="step-num">1</div>
+      <div class="step-title">Clarify Requirements</div>
+      <div class="step-time">2–3 mins</div>
+    </div>
+    <div class="step-body">
+      <div class="step-tip">Never jump to solution. Ask these first — every time.</div>
+
+      <div class="sub-label">Functional</div>
+      <div class="questions">
+        <div class="question">What are the <strong>core features</strong> we must build? (not nice-to-have)</div>
+        <div class="question">Who are the <strong>users</strong>? (consumers, enterprises, internal teams)</div>
+        <div class="question">What does the <strong>main user flow</strong> look like end to end?</div>
+      </div>
+
+      <div class="sub-label">Non-Functional</div>
+      <div class="questions">
+        <div class="question">What is the expected <strong>scale</strong>? (DAU, requests/sec, data volume)</div>
+        <div class="question">Is this <strong>read-heavy or write-heavy</strong>?</div>
+        <div class="question">What is the <strong>latency requirement</strong>? (real-time, near-real-time, batch)</div>
+        <div class="question">Any <strong>availability/consistency</strong> requirements? (99.9% uptime?)</div>
+        <div class="question">Any <strong>geographic constraints</strong>? (single region or global?)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step step-2">
+    <div class="step-header">
+      <div class="step-num">2</div>
+      <div class="step-title">Define Scope</div>
+      <div class="step-time">1–2 mins</div>
+    </div>
+    <div class="step-body">
+      <div class="step-tip">Say out loud what you will and won't cover. Shows structured thinking.</div>
+      <div class="questions">
+        <div class="question">Say: <strong>"I'll focus on X, Y, Z and skip A, B for now"</strong></div>
+        <div class="question">Estimate scale: <strong>DAU × requests/user = total RPS</strong>. Say the number.</div>
+        <div class="question">Estimate storage: <strong>data size × users × retention</strong>. Say the number.</div>
+        <div class="question">Confirm: <strong>"Does this scope align with what you're looking for?"</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="step step-3">
+    <div class="step-header">
+      <div class="step-num">3</div>
+      <div class="step-title">High Level Design (HLD)</div>
+      <div class="step-time">5–8 mins</div>
+    </div>
+    <div class="step-body">
+      <div class="step-tip">Draw boxes and arrows. Keep it simple — 5 to 7 components max.</div>
+
+      <div class="sub-label">Always include these boxes</div>
+      <div class="questions">
+        <div class="question"><strong>Client</strong> → (web/mobile/API consumer)</div>
+        <div class="question"><strong>API Gateway / Load Balancer</strong> → entry point</div>
+        <div class="question"><strong>Core Service(s)</strong> → main business logic</div>
+        <div class="question"><strong>Database(s)</strong> → primary storage</div>
+        <div class="question"><strong>Cache</strong> → if read-heavy (Redis)</div>
+        <div class="question"><strong>Queue</strong> → if async processing needed (Kafka, SQS)</div>
+        <div class="question"><strong>Storage</strong> → if files/blobs (S3)</div>
+      </div>
+
+      <div class="sub-label">Questions to ask yourself while drawing</div>
+      <div class="questions">
+        <div class="question">Where does <strong>data enter</strong> the system?</div>
+        <div class="question">Where does <strong>data get stored</strong>?</div>
+        <div class="question">Where does <strong>processing happen</strong>?</div>
+        <div class="question">Where does <strong>data exit</strong> to the user?</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step step-4">
+    <div class="step-header">
+      <div class="step-num">4</div>
+      <div class="step-title">Deep Dive (2–3 Components)</div>
+      <div class="step-time">8–10 mins</div>
+    </div>
+    <div class="step-body">
+      <div class="step-tip">Pick the hardest parts. Don't try to explain everything.</div>
+
+      <div class="sub-label">How to pick what to deep dive</div>
+      <div class="questions">
+        <div class="question">What is the <strong>most complex</strong> part of this system?</div>
+        <div class="question">What is the <strong>biggest bottleneck</strong> at scale?</div>
+        <div class="question">What part is <strong>unique</strong> to this problem vs generic CRUD?</div>
+      </div>
+
+      <div class="sub-label">Questions to answer in each deep dive</div>
+      <div class="questions">
+        <div class="question">What is the <strong>data model / schema</strong>?</div>
+        <div class="question">What are the <strong>APIs</strong> for this component?</div>
+        <div class="question">Why did I choose <strong>this DB / this approach</strong>?</div>
+        <div class="question">What happens on <strong>failure</strong>? (retry, fallback, dead letter queue)</div>
+        <div class="question">How does <strong>consistency</strong> work here?</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5 -->
+  <div class="step step-5">
+    <div class="step-header">
+      <div class="step-num">5</div>
+      <div class="step-title">Scale & Trade-offs</div>
+      <div class="step-time">3–5 mins</div>
+    </div>
+    <div class="step-body">
+      <div class="step-tip">This is where senior candidates separate from juniors. Always end here.</div>
+
+      <div class="sub-label">Scale questions to address</div>
+      <div class="questions">
+        <div class="question">If <strong>traffic 10x</strong>, what breaks first and how do I fix it?</div>
+        <div class="question">Where do I add <strong>horizontal scaling</strong>? (stateless services)</div>
+        <div class="question">Where do I add <strong>caching</strong>? (read replicas, Redis, CDN)</div>
+        <div class="question">Where do I <strong>shard the database</strong>? What's the shard key?</div>
+        <div class="question">Do I need a <strong>CDN</strong>? (static assets, geo-distributed users)</div>
+      </div>
+
+      <div class="sub-label">Trade-off questions to address</div>
+      <div class="questions">
+        <div class="question">Why <strong>SQL vs NoSQL</strong>? (structured + ACID vs flexible + scale)</div>
+        <div class="question">Why <strong>sync vs async</strong>? (latency vs reliability)</div>
+        <div class="question">Why <strong>monolith vs microservices</strong>? (simplicity vs scale)</div>
+        <div class="question">What did I <strong>sacrifice</strong>? (consistency, cost, complexity)</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Golden Rules -->
+<div class="golden-rules">
+  <h3>⚡ Golden Rules</h3>
+  <div class="rule"><span>1.</span> Always clarify before drawing anything. Jumping = red flag.</div>
+  <div class="rule"><span>2.</span> Think out loud. Interviewers want to hear your reasoning, not just the answer.</div>
+  <div class="rule"><span>3.</span> Say "I'd choose X because Y, but the trade-off is Z" — not just "I'd use Redis."</div>
+  <div class="rule"><span>4.</span> You don't need a perfect design. You need a defensible one.</div>
+  <div class="rule"><span>5.</span> If stuck, go back to requirements. The answer is usually there.</div>
+</div>
+
+<div class="footer">Practice daily with 1 question. Use VidyaTrack or CitiusTech RAG as your first example.</div>
+
+</body>
+</html>
