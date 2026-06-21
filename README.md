@@ -63,3 +63,76 @@ CROSS-CUTTING TOPICS to address in follow-ups for each question:
 
 Generate one question at a time and wait for me to say 
 "next" before proceeding to the next question.
+
+
+
+Remote (highest ceiling):
+
+Hyperwrite AI
+Cohere (India remote)
+Together AI (India remote)
+Turing.com (US client remote)
+Toptal (AI Engineer track)
+Arc.dev (remote AI roles)
+
+Bengaluru product companies (18-25 LPA):
+
+7. Razorpay
+
+8. CRED
+
+9. Zepto
+
+10. Swiggy
+
+11. PhonePe
+
+12. Meesho
+
+13. Freshworks
+
+14. Chargebee
+15. 15. HealthifyMe
+
+16. Postman
+
+17. BrowserStack
+
+18. Sarvam AI (Indian LLM startup—perfect fit)
+
+19. Krutrim (Ola's AI company—direct match)
+
+20. Unacademy
+Hyderabad:
+
+21. Microsoft IDC Hyderabad (AI teams)
+
+22. Google Hyderabad (stretch but apply)
+
+23. Amazon Hyderabad (AI/ML roles)
+
+24. Walmart Global Tech
+Pune (GCCs + product):
+
+25. Deutsche Bank GCC
+
+26. Barclays Pune
+
+27. JP Morgan Pune
+
+28. HSBC Tech Pune
+
+29. Persistent Systems
+
+30. ThoughtWorks
+Consulting (Big4 AI practice):
+
+31. Deloitte USI
+
+32. Accenture AI
+
+33. IBM India
+
+34. EY Tech
+
+
