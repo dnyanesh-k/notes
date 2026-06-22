@@ -2,23 +2,71 @@
 
 ---
 
-## Clarifying Questions
+## How to Approach This in an Interview
 
-What types of documents are we processing — PDFs, scanned images (OCR needed), Word files, HTML? The preprocessing steps differ dramatically between machine-readable text and scanned images.
-
-What's the processing goal — extraction (pull structured data from free text), classification (label the document type), transformation (convert format), or all three? This determines the pipeline stages.
-
-What's the volume — a few hundred documents per day or millions? And what are the latency requirements — is processing triggered on upload (real-time, seconds) or is nightly batch acceptable?
-
-Do we need human-in-the-loop for low-confidence extractions, or is fully automated processing required?
-
-*Assuming: mixed document types (PDFs, scanned images, Word files), multi-stage processing (OCR → extraction → classification → structured output), 500K documents/day, processing within 5 minutes of upload, human review for low-confidence results.*
+Document processing combines computer vision (OCR), NLP (extraction, classification), and distributed pipeline design. The interesting architectural challenge is the state machine: a document moves through stages, each stage can fail independently, and you need visibility into exactly where it is. Start with the pipeline stages and the state machine — that's what differentiates a solid answer.
 
 ---
 
-## Scope
+## Clarifying Questions
 
-I'll design a scalable, multi-stage document processing pipeline with: ingestion, OCR for scanned documents, structured data extraction, classification, quality scoring, and routing for human review. Each stage is decoupled via queues so stages can scale and fail independently.
+**1. What document types?**
+
+"PDFs, scanned images, Word files? Or all of the above?"
+
+*Why this matters:* Machine-readable PDFs (text-based) just need text extraction. Scanned images need OCR first. Word files need DOCX parsing. Each requires different preprocessing.
+
+**2. What's the processing goal?**
+
+"Are we extracting structured data from documents (invoice → line items), classifying document types, or doing both?"
+
+*Why this matters:* Classification needs an ML model. Extraction needs NER or LLM-based extraction. Both together is a multi-stage pipeline.
+
+**3. Volume and latency?**
+
+"How many documents per day, and how quickly must they be processed after upload?"
+
+*Why this matters:* 100 docs/day = simple sequential pipeline. 500K/day = distributed parallel workers with auto-scaling.
+
+**4. Human review?**
+
+"For low-confidence extractions, should a human verify the results, or is fully automated processing required?"
+
+*Why this matters:* Human review needs a review dashboard, assignment system, correction storage, and feedback loop for model retraining.
+
+### Assumptions
+
+```
+- Mixed types: PDFs (machine-readable + scanned), Word, images
+- Goal: OCR → extraction (entities, key-value pairs) → classification → structured output
+- 500K documents/day = ~5.8 docs/sec average, bursts to 50 docs/sec
+- Processing SLA: 5 minutes from upload to processed result
+- Human review for low-confidence (< 85%) extractions
+- Each document gets a confidence score; documents below threshold go to human review
+```
+
+---
+
+## Back-of-Envelope Math
+
+```
+Volume: 500K docs/day = 5.8 docs/sec average
+
+If 30% are scanned (need OCR):
+  150K docs/day × Textract: $0.015/page × 10 pages avg = $22,500/day
+  → Budget for OCR: evaluate Tesseract vs Textract per document value
+
+Processing time targets:
+  Pre-processing (parse): 1-5 seconds
+  OCR (if needed): 10-30 seconds
+  Extraction: 1-5 seconds (NER) or 10-30 seconds (LLM-based)
+  Classification: 0.5 seconds
+  Total: 12-60 seconds per document
+  
+  Parallelism needed for 5-minute SLA:
+  60 seconds per doc, 500K/day = 5.8 docs/sec needed
+  With 30 workers: 30 × (1/60 docs/sec) = 0.5 docs/sec each → 30 workers needed
+```
 
 ---
 
@@ -30,316 +78,555 @@ I'll design a scalable, multi-stage document processing pipeline with: ingestion
 │                                                                              │
 │  Upload ──▶ S3 ──▶ SQS ──▶ ┌───────────────────────────────────────────┐  │
 │                              │         Stage 1: Pre-processing           │  │
-│                              │  Detect type → PDF/Image/Word             │  │
+│                              │  Type detection (magic bytes)             │  │
 │                              │  PDF text extraction (PyMuPDF)            │  │
-│                              │  Image → OCR queue (Tesseract/AWS Textract)│  │
+│                              │  Scanned PDF → OCR queue                  │  │
 │                              └─────────────────┬─────────────────────────┘  │
 │                                                 │ (clean text)               │
 │                                                 ▼                            │
 │                              ┌───────────────────────────────────────────┐  │
-│                              │       Stage 2: Information Extraction      │  │
-│                              │  Named Entity Recognition (spaCy, BERT)   │  │
-│                              │  Key-value extraction (dates, amounts,     │  │
-│                              │  names, addresses)                         │  │
-│                              │  Table detection and parsing               │  │
+│                              │       Stage 2: Information Extraction     │  │
+│                              │  Named Entity Recognition (spaCy/BERT)   │  │
+│                              │  Key-value extraction (forms)             │  │
+│                              │  LLM extraction (complex documents)       │  │
+│                              │  Confidence scoring per field             │  │
 │                              └─────────────────┬─────────────────────────┘  │
-│                                                 │ (structured JSON)          │
+│                                                 │ (JSON)                     │
 │                                                 ▼                            │
 │                              ┌───────────────────────────────────────────┐  │
-│                              │       Stage 3: Classification & Scoring   │  │
-│                              │  Document type classification              │  │
-│                              │  Confidence scoring                        │  │
-│                              │  Routing: auto-approve vs human review     │  │
+│                              │       Stage 3: Classification & Routing   │  │
+│                              │  Document type: invoice/contract/form     │  │
+│                              │  Overall confidence score                  │  │
+│                              │  Route: auto-approve OR human review       │  │
 │                              └─────────────────┬─────────────────────────┘  │
 │                                                 │                            │
 │                              ┌──────────────────┴───────────────┐           │
 │                              ▼                                   ▼           │
-│                    ┌──────────────────┐             ┌──────────────────────┐│
-│                    │  Output Store    │             │   Human Review Queue ││
-│                    │  (PostgreSQL +   │             │   (Review Dashboard)  ││
-│                    │   S3 for files)  │             └──────────────────────┘│
+│                    ┌──────────────────┐             ┌────────────────────┐  │
+│                    │  Output Store    │             │  Human Review Queue│  │
+│                    │  (PostgreSQL +   │             │  (Review Dashboard)│  │
+│                    │   S3)            │             └────────────────────┘  │
 │                    └──────────────────┘                                      │
 └──────────────────────────────────────────────────────────────────────────────┘
-
-Orchestration: each stage is a separate worker pool. All connected by SQS.
-Monitoring: each document has a state machine — every stage transition logged.
 ```
+
+**Why SQS between each stage?**
+
+Each stage is a separate worker pool. SQS decouples them — if OCR is slow, pre-processing workers can finish their work and publish to SQS without waiting. OCR workers drain the queue at their own pace.
+
+If you connect stages directly (Stage 1 calls Stage 2 synchronously), one slow stage blocks everything. With SQS, each stage scales independently based on its queue depth.
 
 ---
 
-## Deep Dive 1 — Stage 1: Pre-processing
+## Part 1: Pre-processing Stage
 
 ### Document Type Detection
 
+Never trust file extensions — they can be wrong or spoofed. Use "magic bytes" — the first few bytes of a file that identify its format:
+
 ```python
-def detect_type(s3_key: str, content_bytes: bytes) -> str:
-    # Magic bytes detection — more reliable than file extension
-    if content_bytes[:4] == b'%PDF':
-        return 'pdf'
-    if content_bytes[:2] in (b'BM', b'\xff\xd8'):  # BMP or JPEG
-        return 'image'
-    if content_bytes[:4] == b'PK\x03\x04':  # ZIP = DOCX/XLSX
-        return 'docx'
+def detect_type(content_bytes: bytes) -> str:
+    """
+    Magic byte signatures (first few bytes of file):
+    PDF:  bytes 0-3 = b'%PDF' (ASCII: percent, P, D, F)
+    JPEG: bytes 0-1 = b'\xff\xd8'
+    PNG:  bytes 0-7 = b'\x89PNG\r\n\x1a\n'
+    DOCX: bytes 0-3 = b'PK\x03\x04' (DOCX is a ZIP archive)
+    BMP:  bytes 0-1 = b'BM'
+    """
+    signatures = {
+        b'%PDF': 'pdf',
+        b'\xff\xd8': 'jpeg',
+        b'\x89PNG': 'png',
+        b'PK\x03\x04': 'docx_or_xlsx',  # need further inspection
+        b'BM': 'bmp',
+        b'GIF8': 'gif'
+    }
+    
+    for magic, file_type in signatures.items():
+        if content_bytes[:len(magic)] == magic:
+            return file_type
+    
     return 'unknown'
 ```
 
 ### PDF Processing
 
-PDFs come in two types: text-based (most modern PDFs) and image-based (scanned, photographed documents).
-
 ```python
-def extract_text_from_pdf(pdf_bytes: bytes) -> tuple[str, bool]:
-    doc = fitz.open(stream=pdf_bytes)
-    text = ""
-    for page in doc:
-        page_text = page.get_text()
-        text += page_text
-    
-    is_scanned = len(text.strip()) < 100 and doc.page_count > 0
-    return text, is_scanned
+import fitz  # PyMuPDF
 
-# If text too short → it's a scanned PDF → route to OCR stage
+def extract_pdf_text(pdf_bytes: bytes) -> tuple[str, bool]:
+    """Returns (text, is_scanned)"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    full_text = ""
+    
+    for page_num in range(doc.page_count):
+        page = doc[page_num]
+        page_text = page.get_text("text")  # extract embedded text
+        full_text += page_text
+    
+    # Is this a scanned PDF? 
+    # Scanned PDFs have pages but no embedded text (or very little)
+    avg_chars_per_page = len(full_text) / doc.page_count if doc.page_count > 0 else 0
+    is_scanned = avg_chars_per_page < 50  # threshold: < 50 chars/page = likely scanned
+    
+    return full_text, is_scanned
 ```
 
 ### OCR for Scanned Documents
 
-OCR (Optical Character Recognition) converts image pixels to text. Two options:
+**What is OCR (Optical Character Recognition)?**
 
-**Tesseract (open source):** Free, runs locally. Accuracy: ~85-95% for clean scans, degrades on poor quality images. Speed: 1-5 seconds per page.
+OCR converts images of text into machine-readable text. It works by:
+1. Detecting regions that contain text (text detection)
+2. Recognizing individual characters in those regions (character recognition)
+3. Assembling characters into words and lines
 
-**AWS Textract (managed):** ~99% accuracy, handles tables and forms natively (detects key-value pairs in forms: "Name: John Smith"). More expensive ($0.015/page) but production-grade. Handles multi-column, handwriting, and complex layouts.
+**Two options:**
+
+**Tesseract (open source):**
+- Free, runs locally
+- Accuracy: 85-95% for clean scans, degrades on poor quality
+- Speed: 1-5 seconds per page
+- Use for: high-volume low-value documents where cost matters
+
+**AWS Textract (managed service):**
+- ~99% accuracy for standard printed text
+- Handles tables, forms, multi-column layouts natively
+- Price: $0.015 per page (expensive at scale)
+- Returns structured form data (key-value pairs in forms): "Name: John Smith" → `{key: "Name", value: "John Smith"}`
+- Use for: high-value documents (legal, financial, medical) where accuracy matters
 
 ```python
 def ocr_with_textract(image_bytes: bytes) -> dict:
-    client = boto3.client('textract')
-    response = client.analyze_document(
+    import boto3
+    textract = boto3.client('textract')
+    
+    # FeatureTypes=['TABLES', 'FORMS'] enables structured extraction
+    response = textract.analyze_document(
         Document={'Bytes': image_bytes},
-        FeatureTypes=['TABLES', 'FORMS']  # detect tables and key-value pairs
+        FeatureTypes=['TABLES', 'FORMS']
     )
     
-    # Extract text blocks
-    text_blocks = [b['Text'] for b in response['Blocks'] if b['BlockType'] == 'LINE']
-    full_text = '\n'.join(text_blocks)
+    # Extract plain text (line by line)
+    text_lines = [
+        block['Text'] 
+        for block in response['Blocks'] 
+        if block['BlockType'] == 'LINE'
+    ]
+    full_text = '\n'.join(text_lines)
     
     # Extract form key-value pairs
+    # Example: "Invoice Date" → "June 22, 2026"
     kv_pairs = extract_key_value_pairs(response['Blocks'])
     
-    # Extract table data
+    # Extract table data (structured grid)
     tables = extract_tables(response['Blocks'])
     
-    return { 'text': full_text, 'kv_pairs': kv_pairs, 'tables': tables }
+    return {
+        'text': full_text,
+        'kv_pairs': kv_pairs,   # {"Invoice Date": "June 22, 2026", "Total": "$1,250"}
+        'tables': tables         # [[row1_col1, row1_col2], [row2_col1, ...]]
+    }
 ```
 
-**Image preprocessing before OCR (critical for quality):**
-- Deskew: rotate slightly tilted images to be straight
-- Denoise: remove scan artifacts (speckles, lines)
-- Binarize: convert to black-and-white (increases contrast for OCR)
-- DPI normalization: ensure at least 300 DPI (below this, OCR accuracy drops sharply)
+**Why image pre-processing matters:**
 
-Poor input → poor OCR → poor extraction. Preprocessing quality determines downstream accuracy.
+OCR accuracy degrades with:
+- Skew (tilted scan): correct with rotation detection
+- Low contrast: binarize (convert to pure black-and-white)
+- Low DPI: below 300 DPI, character recognition fails. Upscale to 300 DPI minimum.
+- Noise (scanner artifacts): remove with noise reduction filters
+
+```python
+from PIL import Image, ImageFilter, ImageEnhance
+import numpy as np
+
+def preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    # Step 1: Convert to grayscale
+    gray = image.convert('L')
+    
+    # Step 2: Increase contrast
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(2.0)
+    
+    # Step 3: Binarize (Otsu's threshold)
+    arr = np.array(gray)
+    threshold = np.mean(arr)
+    binary = Image.fromarray((arr > threshold).astype(np.uint8) * 255)
+    
+    # Step 4: Ensure 300 DPI
+    width, height = binary.size
+    target_width = int(width * 300 / 72)  # assuming 72 DPI input
+    binary = binary.resize((target_width, int(height * target_width / width)), 
+                           Image.LANCZOS)
+    
+    return binary
+```
 
 ---
 
-## Deep Dive 2 — Stage 2: Information Extraction
-
-After getting clean text, extract structured data.
+## Part 2: Information Extraction Stage
 
 ### Named Entity Recognition (NER)
 
 ```python
 import spacy
+
 nlp = spacy.load("en_core_web_lg")
 
-def extract_entities(text: str) -> dict:
+def extract_named_entities(text: str) -> dict:
+    """
+    spaCy entity labels:
+    PERSON: "John Smith", "Dr. Adams"
+    ORG:    "Acme Corp", "Google LLC"
+    DATE:   "June 22, 2026", "next Monday"
+    MONEY:  "$1,250.00", "€500"
+    GPE:    geographic/political entity: "New York", "India"
+    LAW:    "Section 12(b)", "HIPAA"
+    """
     doc = nlp(text)
-    return {
-        'persons': [ent.text for ent in doc.ents if ent.label_ == 'PERSON'],
-        'organizations': [ent.text for ent in doc.ents if ent.label_ == 'ORG'],
-        'dates': [ent.text for ent in doc.ents if ent.label_ == 'DATE'],
-        'money': [ent.text for ent in doc.ents if ent.label_ == 'MONEY'],
-        'locations': [ent.text for ent in doc.ents if ent.label_ == 'GPE'],
+    
+    entities = {
+        'persons': [],
+        'organizations': [],
+        'dates': [],
+        'amounts': [],
+        'locations': [],
+        'legal_references': []
     }
+    
+    label_map = {
+        'PERSON': 'persons',
+        'ORG': 'organizations',
+        'DATE': 'dates',
+        'MONEY': 'amounts',
+        'GPE': 'locations',
+        'LAW': 'legal_references'
+    }
+    
+    for ent in doc.ents:
+        if ent.label_ in label_map:
+            entities[label_map[ent.label_]].append(ent.text)
+    
+    return entities
 ```
 
-For domain-specific entities (legal clause types, medical terms, financial instruments), fine-tune a BERT model on domain-labeled data. spaCy's general model won't know that "Force Majeure" is a legal clause type.
+**Why the generic NER model isn't enough for specialized domains:**
+
+spaCy's "en_core_web_lg" is trained on Wikipedia and news text. It recognizes "Force Majeure" as an organization (because it looks like a proper noun), not as a legal clause type. "LIBOR rate" might not be recognized as a financial term.
+
+For domain-specific documents: fine-tune a BERT model on labeled examples from your domain. 1,000 labeled documents is usually enough to significantly improve domain-specific extraction.
 
 ### LLM-based Extraction for Complex Documents
 
-For complex extraction tasks (extract specific clauses from a 50-page contract), LLMs outperform rule-based and NER approaches:
-
 ```python
-extraction_prompt = f"""
-Extract the following fields from this contract text. Return JSON only.
-Fields: contract_date, parties, payment_terms, termination_clause, penalty_amount
+def extract_with_llm(text: str, document_type: str) -> dict:
+    """Use LLM for complex, free-form extraction."""
+    
+    # Template varies by document type
+    if document_type == "contract":
+        fields = ["contract_date", "parties", "payment_terms", 
+                  "termination_clause", "penalty_clauses", "governing_law"]
+    elif document_type == "invoice":
+        fields = ["invoice_number", "invoice_date", "vendor_name", 
+                  "total_amount", "tax_amount", "due_date", "line_items"]
+    
+    prompt = f"""Extract the following fields from this {document_type}.
+Return a JSON object only, no explanation.
+Fields to extract: {', '.join(fields)}
+If a field is not found, return null for that field.
 
-Text:
-{document_text[:4000]}  # truncate to fit context window
+Document text (first 4000 chars):
+{text[:4000]}
 
-JSON output:
-"""
-
-result = llm.complete(extraction_prompt)
-extracted = json.loads(result)
+JSON:"""
+    
+    response = llm.complete(prompt, max_tokens=500, temperature=0)
+    
+    try:
+        extracted = json.loads(response)
+    except json.JSONDecodeError:
+        # LLM didn't return valid JSON — retry with stricter prompt
+        extracted = {}
+    
+    return extracted
 ```
 
-Cost: ~$0.05 per document with GPT-4. Justified for high-value documents (contracts, invoices). For simple documents (forms with clearly labeled fields), rule-based regex extraction is faster and cheaper.
+**Cost analysis:**
+
+NER (spaCy): free, < 100ms per document.
+LLM extraction (GPT-4): ~$0.05 per document.
+
+Strategy: Use NER for all documents (cheap, fast baseline). Use LLM only for high-value documents (contracts, legal agreements) or when NER confidence is low.
 
 ### Confidence Scoring
 
-Every extracted field gets a confidence score:
-
 ```python
-def score_extraction(extracted: dict, raw_text: str) -> dict:
-    scored = {}
-    for field, value in extracted.items():
-        if value is None:
-            scored[field] = { 'value': None, 'confidence': 0.0 }
-        elif value in raw_text:  # exact string match → high confidence
-            scored[field] = { 'value': value, 'confidence': 0.95 }
-        elif fuzzy_match(value, raw_text) > 0.8:  # close match
-            scored[field] = { 'value': value, 'confidence': 0.75 }
-        else:
-            scored[field] = { 'value': value, 'confidence': 0.5 }
-    return scored
+def score_field_confidence(field_name: str, extracted_value: str, 
+                           raw_text: str) -> float:
+    """
+    Score confidence that the extracted value is correct.
+    """
+    if extracted_value is None:
+        return 0.0
+    
+    # Exact string present in document → high confidence
+    if extracted_value in raw_text:
+        return 0.95
+    
+    # Fuzzy match → medium confidence
+    from difflib import SequenceMatcher
+    best_ratio = max(
+        SequenceMatcher(None, extracted_value, segment).ratio()
+        for segment in [raw_text[i:i+len(extracted_value)+20] 
+                       for i in range(0, min(len(raw_text), 5000), 50)]
+    )
+    
+    if best_ratio > 0.85:
+        return 0.75  # close match
+    elif best_ratio > 0.70:
+        return 0.55
+    else:
+        return 0.30  # couldn't verify
 ```
-
-For LLM-based extraction, add a separate validation step: re-extract the same fields with a different prompt, compare results. If they agree → high confidence. If they disagree → flag for human review.
 
 ---
 
-## Deep Dive 3 — Stage 3: Classification and Routing
-
-### Document Classification
+## Part 3: Classification and Routing
 
 ```python
-# Multi-class classification using fine-tuned BERT
-classes = ['invoice', 'contract', 'tax_form', 'id_document', 'medical_record', 'other']
+from transformers import pipeline
+
+# Fine-tuned BERT classifier (trained on labeled documents from your domain)
+classifier = pipeline("text-classification", 
+                      model="your-org/document-classifier",
+                      return_all_scores=True)
 
 def classify_document(text: str) -> tuple[str, float]:
-    inputs = tokenizer(text[:512], return_tensors='pt', truncation=True)
-    outputs = classifier_model(**inputs)
-    probs = softmax(outputs.logits)
-    class_idx = argmax(probs)
-    return classes[class_idx], probs[class_idx].item()
+    """Returns (document_type, confidence)"""
+    
+    # Use first 512 tokens (BERT's limit)
+    truncated_text = ' '.join(text.split()[:400])
+    
+    results = classifier(truncated_text)
+    
+    # results: [{"label": "invoice", "score": 0.87}, 
+    #            {"label": "contract", "score": 0.08}, ...]
+    best = max(results[0], key=lambda x: x['score'])
+    
+    return best['label'], best['score']
 
-document_type, confidence = classify_document(extracted_text)
-```
-
-### Routing Decision
-
-```python
-AUTO_APPROVE_THRESHOLD = 0.85
-HUMAN_REVIEW_THRESHOLD = 0.60
-
-def route_document(extracted: dict, doc_type: str, confidence: float) -> str:
-    if confidence < HUMAN_REVIEW_THRESHOLD:
-        return 'human_review'  # too uncertain
+def route_document(doc_id: str, classification_confidence: float,
+                   extracted_fields: dict) -> str:
+    """Decide: auto-approve or send to human review."""
+    
+    AUTO_APPROVE_THRESHOLD = 0.85
+    HUMAN_REVIEW_THRESHOLD = 0.60
+    
+    # Check overall classification confidence
+    if classification_confidence < HUMAN_REVIEW_THRESHOLD:
+        return "human_review"  # document type uncertain
     
     # Check field-level confidence
     low_confidence_fields = [
-        field for field, data in extracted.items()
-        if data['confidence'] < 0.70
+        field for field, data in extracted_fields.items()
+        if isinstance(data, dict) and data.get('confidence', 1.0) < 0.70
     ]
+    
     if len(low_confidence_fields) > 2:
-        return 'human_review'  # too many uncertain fields
+        return "human_review"  # too many uncertain fields
     
-    if confidence >= AUTO_APPROVE_THRESHOLD:
-        return 'auto_approve'
+    if classification_confidence >= AUTO_APPROVE_THRESHOLD and len(low_confidence_fields) == 0:
+        return "auto_approve"
     
-    return 'human_review'  # middle ground → human review
+    return "human_review"  # middle ground: let humans decide
 ```
 
 ---
 
-## Data Model and State Machine
+## Document State Machine
+
+Every document has a `status` field that tracks its current position in the pipeline:
+
+```
+uploaded ──▶ preprocessing ──▶ extracting ──▶ classifying ──▶ auto_approved
+                                                                    OR
+                                                              pending_review ──▶ reviewed
+                                                                    OR
+                                ──▶ failed (at any stage)
+```
 
 ```sql
 CREATE TABLE documents (
-    id              UUID PRIMARY KEY,
-    user_id         BIGINT NOT NULL,
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         BIGINT       NOT NULL,
     filename        VARCHAR(500) NOT NULL,
-    s3_key          VARCHAR(1000) NOT NULL,
-    file_type       VARCHAR(50),
-    status          ENUM('uploaded','preprocessing','extracting','classifying',
-                         'auto_approved','pending_review','reviewed','failed')
-                    DEFAULT 'uploaded',
-    document_type   VARCHAR(100),
-    confidence      DECIMAL(4,3),
-    extracted_data  JSON,
+    s3_key          VARCHAR(1000) NOT NULL,        -- where raw file lives
+    file_type       VARCHAR(50),                   -- 'pdf', 'jpeg', 'docx'
+    
+    status          ENUM(
+        'uploaded',          -- just arrived, not yet processed
+        'preprocessing',     -- Stage 1 running
+        'extracting',        -- Stage 2 running
+        'classifying',       -- Stage 3 running
+        'auto_approved',     -- high confidence, done
+        'pending_review',    -- needs human review
+        'reviewed',          -- human reviewed and approved
+        'failed'             -- unrecoverable error
+    ) DEFAULT 'uploaded',
+    
+    document_type   VARCHAR(100),                  -- 'invoice', 'contract', ...
+    confidence      DECIMAL(4,3),                  -- overall confidence 0.000-1.000
+    extracted_data  JSON,                          -- structured extraction result
     error_message   TEXT,
-    processing_started_at DATETIME,
-    processing_completed_at DATETIME,
+    
+    -- Timing for SLA monitoring
+    processing_started_at    DATETIME,
+    processing_completed_at  DATETIME,
+    
     created_at      DATETIME NOT NULL DEFAULT NOW(),
+    
     INDEX idx_user_status (user_id, status),
     INDEX idx_status_created (status, created_at)
 );
 
 CREATE TABLE processing_events (
-    id              BIGINT PRIMARY KEY AUTO_INCREMENT,
-    document_id     UUID NOT NULL,
-    stage           VARCHAR(100) NOT NULL,
-    status          ENUM('started','completed','failed') NOT NULL,
-    duration_ms     INT,
-    error           TEXT,
-    created_at      DATETIME NOT NULL,
+    id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+    document_id  UUID NOT NULL,
+    stage        VARCHAR(100) NOT NULL,          -- 'preprocessing', 'ocr', 'extraction'
+    status       ENUM('started', 'completed', 'failed') NOT NULL,
+    duration_ms  INT,
+    error        TEXT,
+    created_at   DATETIME NOT NULL,
     INDEX idx_document_id (document_id)
 );
--- Every stage transition logged — full audit trail
+-- Full audit trail: every stage transition logged
+-- Query: SELECT * FROM processing_events WHERE document_id = X
+-- Shows exactly when each stage started, completed, how long it took
 ```
 
 ---
 
 ## Scale — What Breaks at 10x?
 
-At 5M documents/day = ~58 docs/sec:
+10x = 5M documents/day = 58 docs/sec average.
 
-**Pre-processing bottleneck:** OCR with Textract at 2-5 seconds/page, 10-page average = 20-50 seconds per document. At 58 docs/sec, need 58 × 30 seconds = 1,740 concurrent Textract calls. Textract has concurrency limits — use a queue-based pattern with auto-scaling workers that respect Textract's throughput limits. AWS Textract scales automatically but you pay per page. At 5M docs × 10 pages × $0.015/page = $750K/day. Use Tesseract for low-value documents, Textract for high-value ones.
+**OCR throughput:**
 
-**Extraction workers (LLM):** At $0.05/document and 5M/day = $250K/day. Not sustainable. Solutions: use LLM only for complex documents (< 20% of total), batch simpler documents through rule-based extraction, fine-tune a smaller open-source model on your domain-labeled data ($10K one-time cost vs $250K/day).
+AWS Textract has concurrency limits. Use SQS to queue documents for OCR, scale Textract caller workers based on queue depth. Each Textract call takes 10-30 seconds. At 58 scanned docs/sec (assuming 30% are scanned = 17 docs/sec), with 30-second processing time, need 510 concurrent Textract calls.
 
-**PostgreSQL storage:** 5M rows/day with JSON extracted data (~10KB/row) = 50 GB/day. Use TimescaleDB or partition by month. Archive to S3 after 90 days (keep only metadata in DB, full extracted data in S3).
+Cost: 5M docs/day × 30% scanned × 10 pages × $0.015/page = $225,000/day. Prohibitive. Switch to: Tesseract for bulk (cheap, 85% accuracy), Textract only for documents flagged as high-value.
+
+**LLM extraction cost:**
+
+At $0.05/document and 5M/day = $250,000/day. Not sustainable.
+
+Solutions:
+1. Use LLM only for complex documents (contracts, legal) — maybe 10% of volume → $25K/day
+2. Fine-tune a smaller model (Llama 3 8B) on your extracted data → one-time $10K training, $0.001/doc inference
+3. Rule-based extraction for well-structured documents (invoices with consistent templates) → nearly free
+
+**Workers:** Each stage is a separate Kubernetes Deployment. Auto-scale based on SQS queue depth. OCR workers might need 500 replicas during peak. Extraction workers might need 50 replicas. Each scales independently — Textract I/O bound vs extraction CPU bound.
 
 ---
 
 ## Trade-offs
 
-**Rule-based vs ML extraction:** Rules are fast, cheap, predictable, and easy to debug. They break on format variations (different invoice layouts). ML models handle variation but are a black box, require labeled training data, and drift over time (retrain quarterly). Best practice: use rules for well-structured documents with known formats, ML for varied or complex documents.
+**Rule-based vs ML extraction:**
 
-**Synchronous vs asynchronous pipeline:** Processing a document synchronously (user waits for the result) requires the pipeline to complete in < 2 seconds — almost impossible for OCR + ML extraction. Async is correct: user uploads, gets a job ID immediately, polls for status or receives a webhook when complete. The 5-minute SLA for completion is achievable with async.
+Rules: fast, cheap, deterministic, easy to debug. Break on format variation (invoice from vendor A vs vendor B look different).
 
-**Error handling:** Every stage can fail. The document state machine tracks which stage failed. Retry logic is per-stage: Stage 1 (OCR) fails → retry 3× with exponential backoff. Stage 2 (LLM extraction) fails → retry once (LLM APIs are occasionally flaky), then route to human review. Don't retry human review routing — if classification fails, always default to human review rather than auto-approving.
+ML: handles variation, generalizes across formats. Black box, requires labeled training data, drifts as document formats change. Requires quarterly retraining.
+
+**Hybrid strategy:** Use rule-based for documents with known, fixed formats (your company's own form templates). Use ML/LLM for varied external documents (third-party invoices, partner contracts).
+
+**Asynchronous pipeline vs synchronous:**
+
+Synchronous (user waits for 5-minute processing): bad UX. Forces users to sit idle.
+
+Asynchronous (return job ID immediately, notify when complete): correct for this use case. Webhook notification or polling for status. Users start other work while documents process.
 
 ---
 
 ## Cross-Questions
 
-**How do you handle documents in different languages?**
+**Q: How do you handle multi-page documents where information spans pages?**
 
-Language detection as the first step (langdetect library or FastText language classifier, 1ms per document). Route to language-specific NER models (spaCy has models for 60+ languages). For OCR, Tesseract supports 100+ languages — specify language code for better accuracy. For LLM extraction, most modern LLMs handle multilingual input well. Classification models need to be trained on multilingual data. If a language is unsupported, flag for human review.
+```python
+# Context-aware chunking: process the full document, not page by page
+# Important: page breaks in a PDF don't mean semantic breaks
 
-**How do you handle documents with sensitive PII (Social Security Numbers, passport numbers)?**
+# When extracting "payment terms" from a contract:
+# The relevant text might start on page 3 and continue on page 4
+# → Process the full concatenated text, not individual pages
 
-PII detection before storage. After text extraction, run a PII scanner (AWS Comprehend, Microsoft Presidio, or custom regex patterns) that identifies SSN, credit card numbers, passport numbers, medical record numbers. Options: redact (replace with `[REDACTED]`), encrypt with a separate key, or store in a separate high-security data store with stricter access control. The original document on S3 can be encrypted with customer-managed keys (SSE-KMS). Extraction results stored in PostgreSQL should have PII masked in the JSON field. Maintain an audit log of who accessed PII-containing documents.
+full_text = ""
+for page in document.pages:
+    full_text += page.text + " "  # concatenate, let NLP handle sentence boundaries
 
-**How do you maintain extraction quality over time as document formats change?**
+# For LLM extraction: the full document might exceed context window
+# Split into overlapping sections, extract from each, merge:
+def extract_from_large_document(text: str, fields: list[str]) -> dict:
+    SECTION_SIZE = 3000  # tokens
+    OVERLAP = 500        # tokens of overlap between sections
+    
+    words = text.split()
+    results = {}
+    
+    for i in range(0, len(words), SECTION_SIZE - OVERLAP):
+        section = ' '.join(words[i:i + SECTION_SIZE])
+        section_result = extract_with_llm(section, fields)
+        
+        # Merge: prefer non-null values, higher confidence wins
+        for field, value in section_result.items():
+            if value is not None and (field not in results or results[field] is None):
+                results[field] = value
+    
+    return results
+```
 
-Monitor extraction confidence scores over time. A sudden drop in average confidence for a document type signals format drift — maybe the vendor changed their invoice template. Set up alerting: if average confidence for 'invoice' documents drops below 0.80 over a rolling 7-day window, trigger an alert. The human review queue is the feedback mechanism — reviewers correct extractions. Store corrections in a training dataset. Re-train the extraction model monthly on accumulated corrections. This is a continuous learning loop: model → predictions → corrections → re-training.
+**Q: How do you maintain extraction quality over time as document formats change?**
 
-**How would you implement parallel stage processing?**
+1. **Monitor confidence scores over time:** If average confidence for "invoice" documents drops from 0.87 to 0.74 over 2 weeks, something changed.
 
-Some stages can run in parallel. For a contract document: classification (what type of document) and entity extraction (who are the parties) are independent — run both simultaneously. Use a fan-out pattern from the orchestrator:
+2. **Feedback loop from human review:** When reviewers correct an extraction, store the correction:
+   ```
+   { document_id: X, field: "total_amount", 
+     extracted: "$1,250", 
+     corrected: "$12,500",   ← reviewer caught a decimal error
+     reviewer_id: 123 }
+   ```
+
+3. **Monthly retraining:** Accumulate 500+ corrections → retrain extraction model on original + corrections. Model adapts to format drift.
+
+4. **A/B test new models:** Before deploying a retrained model, test on held-out validation set. Only deploy if metrics improve.
+
+**Q: How would you build the human review interface?**
 
 ```
-Pre-processing completes → publish to two queues simultaneously:
-  Queue A: classification workers
-  Queue B: extraction workers
-
-Both run in parallel → each publishes results to "merge" queue
-Merge worker waits for both results → combines → routes
+Review Dashboard:
+  ┌─────────────────────────────────────────────────────┐
+  │  Document: invoice_2026_june_vendor_abc.pdf          │
+  │  Status: Pending Review (Confidence: 71%)            │
+  ├─────────────────────────────────────────────────────┤
+  │  ┌─────────────────┐  ┌──────────────────────────┐  │
+  │  │   Document      │  │   Extracted Fields        │  │
+  │  │   (rendered     │  │                           │  │
+  │  │    PDF viewer)  │  │   Invoice Date: 06/22/26 ✓│  │
+  │  │                 │  │   ← HIGH CONFIDENCE (95%) │  │
+  │  │                 │  │                           │  │
+  │  │  [highlighted:  │  │   Total Amount: $1,250 ⚠  │  │
+  │  │   "Total:       │  │   ← LOW CONFIDENCE (55%)  │  │
+  │  │    $1,250.00"]  │  │   [editable field: _____ ]│  │
+  │  │                 │  │                           │  │
+  │  │                 │  │   Vendor Name: Acme Corp ✓│  │
+  │  │                 │  │   ← HIGH CONFIDENCE (92%) │  │
+  │  └─────────────────┘  └──────────────────────────┘  │
+  │  [APPROVE]  [REJECT]  [SKIP TO NEXT]                 │
+  └─────────────────────────────────────────────────────┘
 ```
 
-This reduces total processing time significantly — if classification takes 1 second and extraction takes 3 seconds, running in parallel takes 3 seconds instead of 4.
+Low-confidence fields are highlighted in red/amber, pre-populated with the extracted value, and editable. Reviewer focuses attention on uncertain fields, confirming or correcting. High-confidence fields show as read-only with green checkmark.
 
-**How do you build the human review interface?**
-
-A web dashboard where reviewers see documents in the review queue. For each document: show the original document (rendered PDF or image), the extracted fields with confidence scores highlighted (low confidence in red), and editable fields to correct values. Reviewer submits corrections → stored back to the extracted_data JSON. Reviewers are assigned documents based on their domain expertise (legal reviewer for contracts, finance reviewer for invoices). Track reviewer accuracy over time — compare their corrections against ground truth on test documents. High reviewer accuracy = reliable ground truth for model retraining.
+Queue assignment: route legal documents to legal reviewers, financial documents to finance team. Track reviewer accuracy by comparing their corrections against ground-truth test documents. High-accuracy reviewers handle complex documents; new reviewers get standard ones.

@@ -1,28 +1,80 @@
 # Q9: Design RAG Pipeline at Scale
 
-> Direct from production experience — ARIA at CitiusTech is this system. Anchor every answer in that.
+> Anchor every answer in ARIA at CitiusTech — this is production experience, not theory.
+
+---
+
+## How to Approach This in an Interview
+
+RAG (Retrieval-Augmented Generation) is the architecture of every enterprise AI product right now. The question tests whether you understand: why RAG exists (LLMs hallucinate without grounding), the two-pipeline structure (ingestion vs query), and the production concerns that separate a demo from a real system (evaluation, caching, chunking quality, multi-tenancy). If you built ARIA, you've lived all of this — lead with that.
 
 ---
 
 ## Clarifying Questions
 
-A few things to clarify. What's the knowledge base — structured documents like PDFs and Word files, or unstructured like web pages and wikis? The ingestion pipeline differs significantly.
+**1. What's in the knowledge base?**
 
-How large is the knowledge base — hundreds of documents or millions? This determines whether we need approximate nearest neighbor search or can get away with exhaustive search.
+"Are we indexing structured documents (PDFs, Word files), semi-structured (HTML pages, wikis), or database tables? The parsing strategy changes significantly."
 
-What's the query latency requirement? Sub-second for a chat interface, or a few seconds for a batch report generation pipeline? Real-time RAG needs a very different serving architecture than batch.
+*Why this matters:* PDFs need text extraction (PyMuPDF). Scanned PDFs need OCR first. HTML needs scraping + noise removal. Database rows need structured formatting.
 
-Is this multi-tenant — multiple organizations with isolated knowledge bases? Or single-tenant? Multi-tenant adds data isolation complexity at the vector store level.
+**2. Knowledge base size?**
 
-Do we need to handle knowledge base updates in real-time (document changed = results update immediately) or can there be a delay?
+"Are we talking about hundreds of documents or millions? And how often does the knowledge base change — static (rare updates) or dynamic (documents updated daily)?"
 
-*Assuming: enterprise knowledge base (PDFs, Markdown, internal wikis), 100K documents, sub-2-second query latency, multi-tenant, knowledge base updates within minutes of document change.*
+*Why this matters:* Hundreds of docs = exhaustive vector search is fine. Millions of docs = Approximate Nearest Neighbor (ANN) search is required. Dynamic = incremental re-ingestion, fingerprint-based deduplication.
+
+**3. Latency requirement?**
+
+"Sub-second for a chat interface, or a few seconds for a report generation pipeline?"
+
+*Why this matters:* Sub-second means: query embedding + ANN search + LLM call must all happen within ~1 second. Aggressive caching and model selection matter. A few seconds allows larger models, more re-ranking, multi-hop retrieval.
+
+**4. Multi-tenant?**
+
+"Multiple organizations with isolated knowledge bases, or single-tenant?"
+
+*Why this matters:* Multi-tenant = every query must be filtered to the current tenant. Cross-tenant data leakage is a security incident. ARIA had this requirement — enforced at the vector DB query level.
+
+### Assumptions
+
+```
+- Enterprise knowledge base: PDFs, Markdown, internal wiki pages
+- 100K documents per tenant (manageable but still needs ANN)
+- Multi-tenant (multiple organizations, fully isolated)
+- Sub-2-second query latency
+- Knowledge base updates within minutes of document change
+- At-least 100 queries/sec per tenant, 10 tenants = 1,000 queries/sec total
+```
 
 ---
 
-## Scope
+## Back-of-Envelope Math
 
-I'll design two pipelines: the ingestion pipeline (document → chunks → embeddings → vector store) and the query pipeline (user question → retrieval → context packing → LLM → response). I'll include evaluation, caching, and guardrails since those are what separate a toy RAG from a production one.
+```
+Ingestion:
+  100K documents × 10 pages average × 512 tokens/page
+  = 100K × 5,120 tokens = 512M tokens total
+  
+  With 512 tokens per chunk and 10% overlap:
+  ~1M chunks per tenant
+
+  Embedding: 1M chunks × 50ms/chunk (CPU MiniLM) = 50,000 seconds = 14 hours
+  → Use GPU inference: 5ms/chunk = 1,400 seconds = 23 minutes for full re-index
+  → Incremental updates: only re-embed changed documents → seconds per update
+
+Vector storage:
+  1M chunks × 384 floats × 4 bytes = 1.5 GB per tenant
+  10 tenants = 15 GB total → fits on one vector DB node
+
+Query latency budget (2 second SLA):
+  Query embedding: 10ms
+  ANN vector search: 20ms
+  Re-ranking (cross-encoder): 100ms
+  LLM call (GPT-4 streaming): 1,000ms
+  Overhead (network, context packing): 100ms
+  Total: ~1,230ms ← within 2 second budget
+```
 
 ---
 
@@ -37,7 +89,7 @@ I'll design two pipelines: the ingestion pipeline (document → chunks → embed
 │   SharePoint)     HTML parser)    semantic)        OpenAI)        pgvector)  │
 │                                       │                                      │
 │                               Metadata Store (MySQL)                         │
-│                               doc_id, chunk_id, source_url, updated_at      │
+│                               doc_id, chunk_id, source_url, fingerprint     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -58,276 +110,642 @@ I'll design two pipelines: the ingestion pipeline (document → chunks → embed
 │                      │ ANN Search   │                       │  (GPT-4,   │ │
 │                      └──────────────┘                       │   Claude)  │ │
 │                                                              └─────┬──────┘ │
-│                                                                    │        │
-│                                                             ┌──────▼──────┐ │
-│                                                             │  Guardrails │ │
-│                                                             │  + Eval Log │ │
-│                                                             └─────────────┘ │
+│                                                                    ▼        │
+│                                                             ┌────────────┐  │
+│                                                             │ Guardrails │  │
+│                                                             │ + Eval Log │  │
+│                                                             └────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Deep Dive 1 — Ingestion Pipeline
+## Part 1: Ingestion Pipeline — Deep Dive
 
-### Document Loading
+### Step 1: Document Loading and Fingerprinting
 
-Different document types need different parsers:
-- PDF: PyMuPDF or pdfplumber (preserve text layout, handle multi-column)
-- Word/DOCX: python-docx
-- HTML/Wiki: BeautifulSoup (strip nav, footer; keep content)
-- Markdown: direct text with frontmatter parsing
-
-Each document gets a fingerprint (SHA256 of content). On re-ingestion, skip if fingerprint unchanged — no redundant embedding calls, which are expensive.
+Before anything else, detect whether the document actually changed (avoid re-ingesting unchanged documents — embedding calls cost money):
 
 ```python
 class DocLoader:
-    def load(self, source: str) -> Document:
-        raw_text = self._parse(source)
-        fingerprint = sha256(raw_text)
-        if self.store.get_fingerprint(source) == fingerprint:
+    def load(self, source: str) -> Optional[Document]:
+        """Returns None if document hasn't changed."""
+        
+        # Fetch raw content based on source type
+        if source.endswith('.pdf'):
+            raw_bytes = s3.get_object(source)
+            raw_text = self._extract_pdf_text(raw_bytes)
+        elif source.endswith('.md'):
+            raw_text = s3.get_object_text(source)
+        elif source.startswith('http'):
+            raw_text = self._scrape_and_clean(source)
+        
+        # Fingerprint = SHA256 of the content
+        # If fingerprint unchanged since last ingestion: skip
+        fingerprint = hashlib.sha256(raw_text.encode()).hexdigest()
+        
+        stored_fp = db.get_fingerprint(source)
+        if stored_fp == fingerprint:
             return None  # unchanged, skip
-        return Document(text=raw_text, source=source, fingerprint=fingerprint)
+        
+        return Document(
+            text=raw_text,
+            source=source,
+            fingerprint=fingerprint,
+            title=self._extract_title(source, raw_text)
+        )
 ```
 
-### Chunking — The Most Underestimated Step
+**PDF extraction options:**
 
-How you chunk determines retrieval quality more than which embedding model you use. Poor chunking = poor answers, regardless of the model.
+- `PyMuPDF (fitz)`: Fast, preserves layout, handles multi-column. Best for most PDFs.
+- `pdfplumber`: Better for tables, extracts structured table data.
+- `pdfminer`: Slower but most accurate for complex layouts.
 
-**Fixed-size chunking:** Split every N tokens (say 512) with M tokens overlap. Simple but cuts sentences mid-thought — the chunk boundary might split a key sentence, losing context.
+If `len(extracted_text) < 100` and document has pages → scanned PDF → route to OCR (AWS Textract).
 
-**Sentence-based chunking:** Split at sentence boundaries. Chunks are semantically coherent. Variable size (50–200 tokens per sentence group). This is what ARIA uses.
+### Step 2: Chunking — The Most Impactful Decision
 
-**Semantic chunking:** Embed each sentence, measure embedding similarity between adjacent sentences. When similarity drops significantly, start a new chunk. Groups semantically related content together. More expensive but highest quality. Use for high-value knowledge bases.
+How you split documents into chunks determines retrieval quality more than which embedding model you use.
 
-**Chunk size trade-off:** Small chunks (128 tokens) → precise retrieval, but the chunk might not contain enough context for the LLM to answer. Large chunks (1024 tokens) → more context but retrieval is noisier (more irrelevant content in chunk). Empirically, 256–512 tokens works best for most enterprise knowledge bases. Add 10% overlap between chunks to prevent losing information at boundaries.
+**Why chunking matters:**
 
 ```
-Document: "The refund policy applies to all purchases. Items must be returned within 30 days. 
-           Digital products are non-refundable. For hardware..."
-
-Chunk 1 (0-512 tokens, overlap with chunk 2):
-  "The refund policy applies to all purchases. Items must be returned within 30 days.
-   Digital products are non-refundable."
-
-Chunk 2 (462-1024 tokens, starts in overlap):
-  "Digital products are non-refundable. For hardware..."
+Too-small chunks (< 100 tokens):
+  "is non-refundable." ← Not enough context to be useful
+  
+Too-large chunks (> 1000 tokens):
+  "The return policy covers all digital products, physical goods, subscription
+   services, and enterprise licenses. Each category has specific rules. Digital
+   products downloaded are non-refundable. Physical goods can be returned within
+   30 days in original packaging. Subscriptions can be cancelled..." (continues)
+  
+  Retrieval matches chunk because it mentions "digital products"
+  But LLM context is polluted with irrelevant return policy details
+  
+Sweet spot (256-512 tokens):
+  "Digital products, including software licenses and downloaded content, are 
+   non-refundable once activated or downloaded. This applies to all digital
+   purchases including ebooks, software licenses, and streaming subscriptions."
+  Dense, specific, useful.
 ```
 
-### Embedding
+**Strategy 1: Fixed-size with overlap (simplest)**
 
-Each chunk is converted to a dense vector (768–1536 dimensions) using an embedding model.
+```python
+def fixed_size_chunk(text: str, chunk_size: int = 512, overlap: int = 50) -> list[str]:
+    words = text.split()
+    chunks = []
+    
+    i = 0
+    while i < len(words):
+        chunk_words = words[i:i + chunk_size]
+        chunks.append(' '.join(chunk_words))
+        i += (chunk_size - overlap)  # step forward, but overlap with next chunk
+    
+    return chunks
+```
 
-**Model choices:**
-- `sentence-transformers/all-MiniLM-L6-v2`: fast (80ms/chunk), 384 dimensions, good for English
-- `text-embedding-3-small` (OpenAI): 1536 dimensions, better quality, costs money per token
-- `BAAI/bge-large-en-v1.5`: open source, near-OpenAI quality
+Problem: cuts sentences mid-thought. "The policy states that refunds are... / ...only available within 30 days" — broken sentence, confusing for both embedding and LLM.
 
-For ARIA, we used MiniLM with a local fastembed server — zero API cost, ~80ms per chunk, runs on CPU. For production at scale, use GPU inference servers (TorchServe, Triton) for 10–50ms/chunk.
+**Strategy 2: Sentence-based chunking (ARIA's approach)**
 
-### Storing in Vector DB
+```python
+import spacy
+nlp = spacy.load("en_core_web_sm")
 
-Each embedding is stored with metadata:
-```json
+def sentence_chunk(text: str, max_tokens: int = 512) -> list[str]:
+    doc = nlp(text)
+    sentences = [sent.text.strip() for sent in doc.sents]
+    
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for sentence in sentences:
+        sentence_tokens = len(sentence.split())
+        
+        if current_length + sentence_tokens > max_tokens and current_chunk:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = []
+            current_length = 0
+        
+        current_chunk.append(sentence)
+        current_length += sentence_tokens
+    
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    return chunks
+```
+
+Respects sentence boundaries. Chunks are semantically coherent. Variable size (50-600 tokens typically) — that's fine.
+
+**Strategy 3: Semantic chunking (highest quality, highest cost)**
+
+Split where embedding similarity drops significantly between adjacent sentences. Groups semantically related content together.
+
+```python
+def semantic_chunk(text: str, threshold: float = 0.85) -> list[str]:
+    sentences = split_sentences(text)
+    embeddings = embedder.embed_batch(sentences)  # O(n) embedding calls
+    
+    chunks = [sentences[0]]
+    current_chunk_sentences = [sentences[0]]
+    
+    for i in range(1, len(sentences)):
+        similarity = cosine_similarity(embeddings[i-1], embeddings[i])
+        
+        if similarity < threshold:
+            # Semantic break detected — start new chunk
+            chunks.append(' '.join(current_chunk_sentences))
+            current_chunk_sentences = [sentences[i]]
+        else:
+            current_chunk_sentences.append(sentences[i])
+    
+    return chunks
+```
+
+Cost: requires embedding every sentence (10x more embedding calls). Worth it for high-value knowledge bases where retrieval quality is critical (legal, medical).
+
+### Step 3: Embedding
+
+Convert each text chunk to a dense vector:
+
+```python
+class Embedder:
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
+        # bge-small: 384 dimensions, 33M params, fast on CPU
+        # bge-large: 1024 dimensions, 335M params, better quality
+        # OpenAI text-embedding-3-small: 1536 dims, API cost, best quality
+        from fastembed import TextEmbedding
+        self.model = TextEmbedding(model_name)
+    
+    def embed(self, text: str) -> list[float]:
+        return list(self.model.embed([text]))[0].tolist()
+    
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # More efficient than embedding one at a time
+        return [emb.tolist() for emb in self.model.embed(texts)]
+```
+
+**Embedding model comparison:**
+
+| Model | Dimensions | Speed (CPU) | Quality | Cost |
+|-------|-----------|-------------|---------|------|
+| all-MiniLM-L6-v2 | 384 | 50ms/chunk | Good | Free |
+| BAAI/bge-small-en-v1.5 | 384 | 40ms/chunk | Better | Free |
+| BAAI/bge-large-en-v1.5 | 1024 | 200ms/chunk | Best OSS | Free |
+| OpenAI text-embedding-3-small | 1536 | ~100ms/call | Excellent | $0.02/1M tokens |
+
+ARIA used MiniLM with fastembed on CPU — zero API cost, good quality for English medical documentation, 50ms/chunk is fast enough.
+
+### Step 4: Storing in Vector DB
+
+```python
+# Each chunk stored with:
 {
-  "id": "chunk_abc123",
-  "embedding": [0.023, -0.145, ...],  // 384 floats
-  "metadata": {
-    "tenant_id": "org_xyz",           // multi-tenancy isolation
-    "doc_id": "doc_456",
-    "source_url": "https://wiki/page",
-    "chunk_index": 3,
-    "text": "Digital products are non-refundable...",  // store text alongside
-    "created_at": "2026-06-21"
-  }
+    "id": "chunk_abc123",
+    "values": [0.023, -0.145, ...],  # 384 floats
+    "metadata": {
+        "tenant_id": "org_xyz",        # CRITICAL: multi-tenancy isolation
+        "doc_id": "doc_456",
+        "source_url": "https://wiki/page",
+        "chunk_index": 3,              # which chunk within the document
+        "text": "Digital products are non-refundable...",  # store text for retrieval
+        "title": "Refund Policy",
+        "created_at": "2026-06-22",
+        "word_count": 87
+    }
 }
 ```
 
-**Multi-tenancy in vector DB:** Use namespace per tenant (Pinecone namespaces) or metadata filter at query time (`where: { tenant_id: "org_xyz" }`). Never allow cross-tenant retrieval — enforce tenant filter on every query. This is directly from ARIA's design.
-
----
-
-## Deep Dive 2 — Query Pipeline
-
-### Step 1: Query Rewriting (optional but powerful)
-
-The user's question is often vague. "What is the policy?" is ambiguous. A query rewriter uses the conversation history to make it specific: "What is Acme Corp's refund policy for digital products?"
+**Multi-tenancy enforcement:** Every vector MUST have `tenant_id`. Every query MUST filter by `tenant_id`. This is enforced in code — you cannot query without passing the current authenticated tenant's ID.
 
 ```python
-rewritten = llm.complete(f"""
-Given this conversation:
-{conversation_history}
-
-Rewrite the latest question to be self-contained and specific:
-{user_question}
-""")
-```
-
-This dramatically improves retrieval for follow-up questions in multi-turn conversations.
-
-### Step 2: Semantic Cache
-
-Before hitting the vector DB, check if a semantically similar question was recently asked.
-
-```python
-query_embedding = embedder.embed(query)
-cached = redis.vector_search(query_embedding, threshold=0.95)
-if cached:
-    return cached.response  # exact semantic match
-```
-
-Redis with RediSearch supports vector similarity search. Cache key = embedding, cache value = the full LLM response. If user asks "what is the return policy?" and 5 minutes ago someone asked "how do I return an item?" — same semantic meaning, return cached response. Cache TTL: 5 minutes for dynamic knowledge, 1 hour for static.
-
-This cuts LLM API costs by 30–50% in production.
-
-### Step 3: Vector Search — ANN (Approximate Nearest Neighbor)
-
-```python
-results = vector_db.query(
+# ALWAYS filter by tenant — never allow a query without it
+results = pinecone_index.query(
     vector=query_embedding,
-    top_k=20,                          # retrieve more than needed
-    filter={"tenant_id": tenant_id},   # multi-tenant isolation
-    include_metadata=True
+    top_k=20,
+    filter={"tenant_id": {"$eq": current_tenant_id}},  # NEVER skip this
+    include_metadata=True,
+    include_values=False  # don't return the vectors, just metadata
 )
 ```
 
-We retrieve top-20 candidates, not top-5. Why? Because the vector similarity isn't perfect — we'll re-rank the 20 down to 5. Retrieving more gives the re-ranker better material to work with.
+---
 
-**HNSW (Hierarchical Navigable Small World):** The indexing algorithm used by most vector DBs. It builds a multi-layer graph where each node connects to its nearest neighbors. Search traverses from the top layer (coarse) to the bottom layer (fine), finding the approximate nearest vectors in O(log N) instead of O(N). Trade-off: approximate (might miss the true nearest neighbor), but at 100K documents, HNSW is 1000x faster than exhaustive search with >95% recall.
+## Part 2: Query Pipeline — Deep Dive
+
+### Step 1: Query Rewriting
+
+The user's raw question is often context-dependent and vague. In a multi-turn conversation, "What about digital products?" is meaningless without the previous context.
+
+```python
+def rewrite_query(conversation_history: list[dict], current_question: str) -> str:
+    if len(conversation_history) == 0:
+        return current_question  # no history, keep as-is
+    
+    system_prompt = """
+    You are a query rewriter. Given the conversation history and the latest user question,
+    rewrite the question to be completely self-contained and specific.
+    Return ONLY the rewritten question, nothing else.
+    """
+    
+    user_prompt = f"""
+    Conversation history:
+    {format_conversation(conversation_history[-4:])}  # last 4 turns
+    
+    Latest question: {current_question}
+    
+    Rewritten question:
+    """
+    
+    rewritten = llm_fast.complete(system_prompt + user_prompt, max_tokens=100)
+    return rewritten.strip()
+
+# Example:
+# History: "Q: What's your return policy? A: Returns within 30 days..."
+# Current: "What about digital products?"
+# Rewritten: "What is the return policy for digital products?"
+```
+
+Use a fast, cheap model (GPT-3.5-turbo or Claude Haiku) for rewriting — it's a small, well-defined task.
+
+### Step 2: Semantic Cache
+
+Before hitting the vector DB (which takes 20ms) and the LLM (which takes 1,000ms), check if this question was recently asked:
+
+```python
+def check_semantic_cache(query: str, tenant_id: str) -> Optional[str]:
+    # Embed the query
+    query_embedding = embedder.embed(query)
+    
+    # Search Redis for a semantically similar recent query
+    # Redis with RedisSearch supports vector similarity
+    similar = redis.ft("cache_index").search(
+        Query(f"*=>[KNN 1 @embedding $vec AS score]")
+        .return_fields("response", "score")
+        .paging(0, 1),
+        query_params={"vec": serialize_embedding(query_embedding)}
+    ).docs
+    
+    if similar and float(similar[0].score) > 0.95:
+        # Cosine similarity > 0.95 = essentially the same question
+        return similar[0].response
+    
+    return None  # cache miss
+
+def store_in_cache(query: str, response: str, tenant_id: str):
+    query_embedding = embedder.embed(query)
+    cache_key = f"cache:{tenant_id}:{hashlib.md5(query.encode()).hexdigest()}"
+    
+    redis.hset(cache_key, mapping={
+        "query": query,
+        "response": response,
+        "embedding": serialize_embedding(query_embedding),
+        "tenant_id": tenant_id
+    })
+    redis.expire(cache_key, 300)  # 5 minute TTL
+```
+
+**Cache hit rate in production:**
+
+ARIA saw ~35% cache hit rate in production. Enterprises tend to ask the same questions repeatedly (new employee onboarding, policy lookups, FAQ-type queries). This translates to 35% reduction in LLM API costs and 35% of queries returning in < 10ms instead of 2 seconds.
+
+### Step 3: Vector Search — ANN Explained
+
+**What is ANN (Approximate Nearest Neighbor)?**
+
+The query vector is a point in 384-dimensional space. We want the 20 most similar points (stored chunk vectors). Exact nearest neighbor = compute distance to all 1M stored vectors = O(1M × 384 float operations) ≈ 400ms per query. Too slow.
+
+ANN algorithms find the approximate nearest neighbors in O(log N) using clever indexing. The standard is **HNSW (Hierarchical Navigable Small World)**:
+
+```
+HNSW structure (conceptual):
+
+Layer 2 (coarse): 
+  Node A ─── Node F ─── Node K
+  (long-range connections, few nodes)
+
+Layer 1 (medium):
+  A─B─C   F─G─H   K─L─M
+  (medium connections)
+
+Layer 0 (fine):
+  A-B-C-D-E  F-G-H-I-J  K-L-M-N-O  (all nodes, dense connections)
+
+Search: enter at top layer (coarse approximation)
+        greedily move toward query vector
+        drop to next layer, repeat
+        at Layer 0: do local exhaustive search
+        
+Result: ~95% recall vs exact search, 100x faster
+```
+
+**What does 95% recall mean?**
+
+Of the true 20 nearest neighbors, we return ~19 of them. The 20th might be missed. That's acceptable — the LLM can work with 19 great chunks rather than needing all 20.
 
 ### Step 4: Re-ranking with Cross-Encoder
 
-The bi-encoder (embedding model) is fast but scores query and document independently — it doesn't look at the relationship between them. A cross-encoder takes the query and each document together and scores them jointly — much more accurate but 10–50x slower.
+```
+Bi-encoder (embedding model): 
+  Query → embedding
+  Document → embedding
+  Similarity = cosine(query_emb, doc_emb)
+  
+  Fast: can precompute doc embeddings
+  Less accurate: computes query and document independently
+  
+Cross-encoder:
+  Input: "[query] + [document]" (concatenated)
+  Output: relevance score (0-1)
+  
+  Slow: can't precompute, must run at query time for each pair
+  More accurate: sees query and document together, captures interaction
+```
 
 ```python
-# First pass: bi-encoder ANN → top-20 candidates
-candidates = vector_db.query(query_embedding, top_k=20)
+from sentence_transformers import CrossEncoder
 
-# Second pass: cross-encoder re-ranking → top-5
-scores = cross_encoder.predict([(query, chunk.text) for chunk in candidates])
-top_5 = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)[:5]
+cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+def rerank(query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
+    # Candidates: top-20 from ANN search
+    pairs = [(query, chunk['metadata']['text']) for chunk in candidates]
+    
+    # Cross-encoder scores each pair jointly
+    scores = cross_encoder.predict(pairs)  # ~100ms for 20 pairs
+    
+    # Sort by cross-encoder score (descending), take top-k
+    ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+    
+    return [chunk for chunk, score in ranked[:top_k]]
 ```
 
-This two-stage retrieval (fast approximate + slow accurate) is how Google's search works. ARIA uses this pattern — initial retrieval with cosine similarity, re-ranking with a fine-tuned cross-encoder.
+**Why the two-stage approach (ANN + re-ranking)?**
 
-### Step 5: Context Packing
+ANN retrieval is fast but imperfect. Cross-encoder is accurate but slow. Two stages:
+1. ANN gets top-20 candidates quickly (20ms, ~95% recall)
+2. Cross-encoder selects the best 5 from those 20 (100ms, near-perfect precision)
 
-Take the top-5 retrieved chunks and build the LLM prompt:
+Total: 120ms for high-quality retrieval. Pure ANN would be 20ms but lower quality. Pure cross-encoder over 1M chunks would be hours.
 
-```
-SYSTEM: You are a helpful assistant for Acme Corp. Answer only based on the 
-provided context. If the answer is not in the context, say "I don't know."
+This is the same two-stage pattern Google's search uses.
+
+### Step 5: Context Packing and LLM Call
+
+```python
+def build_prompt(query: str, chunks: list[dict], 
+                 conversation_history: list[dict]) -> str:
+    context = "\n\n".join([
+        f"[{i+1}] Source: {c['metadata']['source_url']}\n{c['metadata']['text']}"
+        for i, c in enumerate(chunks)
+    ])
+    
+    history = format_conversation(conversation_history[-4:])
+    
+    return f"""You are a helpful assistant for this organization's knowledge base.
+Answer ONLY based on the provided context. If the answer is not in the context,
+say "I don't have information about this in the knowledge base."
 
 CONTEXT:
-[1] Source: refund-policy.pdf, Page 3
-    "Digital products are non-refundable once downloaded..."
+{context}
 
-[2] Source: terms-of-service.md
-    "All returns must be initiated within 30 days of purchase..."
+CONVERSATION HISTORY:
+{history}
 
-[3] ...
+USER QUESTION: {query}
 
-USER QUESTION: Can I return a downloaded ebook?
+Answer:"""
 
-Answer:
+# LLM call
+response = openai_client.chat.completions.create(
+    model="gpt-4-turbo",
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0.1,   # low temperature = deterministic, factual
+    max_tokens=500,
+    stream=True        # stream tokens as they're generated
+)
 ```
 
-**Grounding instruction** ("Answer only based on provided context") is the primary hallucination guard. The LLM cannot invent facts it doesn't have in context — it can only synthesize from what's provided.
+**Context window budget:**
 
-**Context window management:** If 5 chunks × 512 tokens = 2,560 tokens, plus system prompt and question, still within GPT-4's 128K context window. For very large retrievals, summarize chunks that exceed budget: `summarize(chunk, max_tokens=200)`.
+- System prompt: ~200 tokens
+- Retrieved chunks (5 × 512 tokens): 2,560 tokens
+- Conversation history (4 turns × 200 tokens): 800 tokens
+- Current question: ~50 tokens
+- Total: ~3,610 tokens
 
-### Step 6: LLM Response + Guardrails
-
-```python
-response = llm.complete(prompt, max_tokens=500, temperature=0.1)
-# Low temperature = more deterministic, less creative = better for factual Q&A
-
-# Guardrails check:
-if confidence_score(response, retrieved_chunks) < 0.6:
-    response = "I found some related information but I'm not confident enough to answer."
-
-# Log for eval:
-eval_logger.log({
-    "query": query,
-    "retrieved_chunks": [c.id for c in top_5],
-    "response": response,
-    "retrieval_scores": scores,
-    "latency_ms": elapsed
-})
-```
+GPT-4's context window is 128K tokens. We're well within budget. For very large retrieval sets, truncate older conversation turns first, then reduce chunk count.
 
 ---
 
-## Evaluation Framework — How to Know if RAG is Good
+## Evaluation Framework
 
-Without eval, you're flying blind. Production RAG must be measurable.
+Without evaluation, you don't know if your RAG is improving or degrading. ARIA ran nightly evals.
 
-**Retrieval metrics:**
-- Precision@K: of the K retrieved chunks, what fraction are actually relevant? (requires labeled dataset)
-- Recall@K: of all relevant chunks in the KB, what fraction did we retrieve?
-- MRR (Mean Reciprocal Rank): how high up in the ranked list is the first correct answer?
+**Retrieval evaluation:**
 
-**Generation metrics:**
-- Faithfulness: does the answer only use facts from the retrieved context? (LLM-as-judge)
-- Answer relevance: does the answer actually address the question? (LLM-as-judge)
-- Context relevance: are the retrieved chunks relevant to the question?
-
-**LLM-as-judge pattern:**
 ```python
-judge_prompt = f"""
-Rate the faithfulness of this answer on a scale of 1-5.
-Context: {retrieved_context}
-Question: {question}
-Answer: {answer}
-Rating (1-5):
-"""
-score = llm.complete(judge_prompt)
+# Given test set: (query, expected_relevant_doc_ids)
+def evaluate_retrieval(test_cases: list[dict]) -> dict:
+    precision_at_5 = []
+    recall_at_5 = []
+    
+    for case in test_cases:
+        retrieved = retriever.search(case['query'], top_k=5)
+        retrieved_ids = {c['metadata']['doc_id'] for c in retrieved}
+        relevant_ids = set(case['expected_doc_ids'])
+        
+        # Precision@5: of what we retrieved, what fraction is relevant?
+        precision = len(retrieved_ids & relevant_ids) / len(retrieved_ids)
+        
+        # Recall@5: of all relevant docs, what fraction did we retrieve?
+        recall = len(retrieved_ids & relevant_ids) / len(relevant_ids)
+        
+        precision_at_5.append(precision)
+        recall_at_5.append(recall)
+    
+    return {
+        "precision_at_5": mean(precision_at_5),
+        "recall_at_5": mean(recall_at_5)
+    }
 ```
 
-ARIA ran 200 test cases nightly. If precision@5 dropped below 0.8 or faithfulness below 0.85, it triggered an alert before any human noticed degraded quality.
+**LLM-as-judge for generation quality:**
+
+```python
+def evaluate_faithfulness(query: str, retrieved_chunks: list[str], 
+                           answer: str) -> float:
+    """Rate if the answer only uses information from the context."""
+    judge_prompt = f"""
+    Rate the faithfulness of this answer from 1-5.
+    5 = Answer uses ONLY information from context, no hallucination
+    1 = Answer contains significant information not in the context
+    
+    Context: {' '.join(retrieved_chunks)}
+    Question: {query}
+    Answer: {answer}
+    
+    Rating (just the number 1-5):
+    """
+    score = int(judge_llm.complete(judge_prompt).strip())
+    return score / 5.0  # normalize to 0-1
+
+# ARIA's production thresholds:
+# precision@5 < 0.80 → alert (retrieval degraded)
+# faithfulness < 0.85 → alert (LLM hallucinating)
+# Both checked nightly against 200 test cases
+```
 
 ---
 
 ## Scale — What Breaks at 10x?
 
-At 10x users, ~50K queries/sec:
+10x = 10,000 queries/sec, 1M documents per tenant.
 
-**Embedding inference:** 50K queries × 384 dimensions × ~50ms per embedding = need ~2,500 CPU cores or 50 GPUs. GPU inference servers (Triton, TorchServe) reduce to 5ms/embedding. Batch queries together — instead of embedding one query at a time, batch 32 queries and embed in one GPU forward pass.
+**Embedding inference (query side):** 10K queries × 10ms/embedding (GPU) = 100 GPU-seconds/second = 100 GPU-cores dedicated to query embedding. With NVIDIA T4 GPUs (cost-effective), each handles ~500 embeddings/sec. Need 20 GPUs for 10K QPS. Use a dedicated embedding inference server (Triton, TorchServe) with request batching.
 
-**Vector DB:** Pinecone and Weaviate handle millions of vectors. At 100K documents × 10 chunks each × 384 floats = 384M floats = ~1.5 GB. Trivial. At 100M documents, HNSW still scales with sharding. Scale by adding index shards.
+**Vector DB throughput:** Pinecone and Weaviate handle thousands of QPS per pod. Shard by tenant_id — each tenant's vectors on a dedicated pod for strong isolation. At 10 tenants × 1K QPS = 10K QPS total, 2-4 vector DB pods per tenant.
 
-**LLM cost is the dominant bottleneck:** GPT-4 at $0.01/1K tokens. A 3,000 token prompt + 500 token response = $0.035/query. At 50K queries/sec = 4.3B queries/day = $150M/day. This is obviously a problem. Solutions: semantic cache (hit 50% of queries from cache), use smaller models for simple questions (route to GPT-3.5 or Claude Haiku for straightforward factual lookups, reserve GPT-4 for complex queries), fine-tune a smaller model on your domain.
+**LLM API cost at scale:**
+
+10K queries/sec × 3,500 tokens/query × $0.03/1K tokens (GPT-4) = $1,050/sec = $90M/day. Obviously impossible.
+
+Solutions:
+1. **Semantic cache** cuts 30-50% of LLM calls
+2. **Model routing**: Use GPT-3.5 for simple factual queries (~80% of queries), GPT-4 only for complex multi-step reasoning (~20%). Cost reduction: 80%.
+3. **Self-hosted model**: Run Llama 3 70B or Mistral on your own GPU cluster. At this scale, GPU hardware costs less than API fees.
 
 ---
 
 ## Trade-offs
 
-**Dense retrieval vs sparse (BM25) vs hybrid:** Dense embeddings understand semantics ("how do I cancel" matches "subscription termination"). BM25 is exact keyword match — misses synonyms but catches specific terms exactly. Hybrid (combine both scores) outperforms either alone. For production, use hybrid retrieval: dense for semantic relevance, BM25 for keyword precision, combine with Reciprocal Rank Fusion (RRF). ARIA used dense-only; hybrid would have been better for technical term queries.
+**Dense-only vs Hybrid Search (Dense + BM25):**
 
-**Chunk overlap trade-off:** More overlap = fewer information gaps at boundaries, but more duplicate content retrieved. 10% overlap is a good default. At 50% overlap, retrieval recall improves but you're storing and embedding 50% more data.
+ARIA used dense-only (embedding similarity). This works well for semantic questions ("how do I cancel?") but misses exact term matching ("HIPAA violation 45 CFR 164.512"). Adding BM25 (keyword search) via Elasticsearch + fusing results with Reciprocal Rank Fusion (RRF) improves precision for technical queries.
 
-**Re-ranking latency trade-off:** Cross-encoder re-ranking adds 50–200ms. For a 2-second SLA, this is acceptable. If latency SLA is 500ms, skip re-ranking and rely on bi-encoder alone — it's fast enough and good enough for most queries. Only add re-ranking when retrieval precision is insufficient.
+ARIA's precision@5 was 0.85. With hybrid search, we estimated 0.91+ based on offline experiments. The 6% improvement in precision translates directly to better answers. In hindsight, hybrid search would have been worth the added infrastructure (Elasticsearch + RRF fusion code).
+
+**Re-ranking latency vs accuracy:**
+
+Cross-encoder re-ranking adds 100ms but significantly improves precision (from ~0.85 to ~0.93 in our testing). For a 2-second SLA, 100ms is affordable. For a 500ms SLA, skip re-ranking and rely on bi-encoder alone.
+
+**Chunk overlap impact:**
+
+10% overlap: some information at chunk boundaries is captured in both adjacent chunks. Retrieval recall improves slightly (fewer "edge cases" where the answer spans a boundary).
+
+50% overlap: much better boundary coverage, but you're storing and embedding 50% more data, and retrieved chunks have duplicate content (LLM gets the same sentence twice). 10-15% overlap is the sweet spot.
 
 ---
 
 ## Cross-Questions
 
-**How do you handle knowledge base updates in real-time?**
+**Q: How do you handle knowledge base updates in real-time?**
 
-When a document is updated, re-ingest only that document. The ingestion pipeline checks the fingerprint — if changed, re-chunk, re-embed, upsert new vectors (overwrite by doc_id), delete old chunks that no longer exist. This is an incremental update — no full re-indexing needed. Propagation time: fingerprint detection (near-instant with S3 event triggers) + re-embedding (~1 second for a 10-page doc) + vector upsert (< 1 second). Total: under 5 seconds for document updates to be live.
+```
+Document updated in S3/Wiki → S3 Event Notification → SQS → Ingestion Worker
 
-**What if retrieved chunks are irrelevant — the question is outside the knowledge base?**
+Ingestion Worker:
+  1. Download the document
+  2. Compute new fingerprint
+  3. Compare with stored fingerprint
+     If unchanged: skip (no re-ingestion)
+     If changed:
+       4. Delete old chunks from vector DB:
+          vector_db.delete(filter={"doc_id": "doc_456", "tenant_id": "org_xyz"})
+       5. Re-parse, re-chunk, re-embed
+       6. Insert new chunks into vector DB
+       7. Update fingerprint in MySQL
+  
+  Total update time for a 10-page document:
+    Parse: 100ms
+    Chunk: 50ms  
+    Embed (20 chunks × 10ms GPU): 200ms
+    Vector DB upsert: 100ms
+    Total: ~450ms → document updated in knowledge base within 1 second
+```
 
-Set a similarity score threshold. If all top-K retrieved chunks score below 0.6 cosine similarity, the question has no good match in the knowledge base. Instead of passing low-quality context to the LLM and getting a hallucinated answer, return: "I don't have information about this topic in my knowledge base." This is what ARIA's retrieval confidence gate does. You can also add a classifier that detects out-of-scope questions before hitting the vector DB.
+**Q: What if retrieved chunks are irrelevant (question outside knowledge base)?**
 
-**How do you prevent the LLM from answering from its training data instead of retrieved context?**
+```python
+def check_retrieval_confidence(chunks: list[dict]) -> bool:
+    """Return False if no relevant chunks found."""
+    if not chunks:
+        return False
+    
+    # Check the top chunk's similarity score
+    top_score = chunks[0]['score']  # cosine similarity
+    
+    if top_score < 0.60:
+        # Even the best match is below threshold — question isn't in KB
+        return False
+    
+    return True
 
-The system prompt instruction ("Answer ONLY from the provided context") is the primary guard but is probabilistic — LLMs sometimes ignore it. Add a faithfulness check: after getting the response, verify each factual claim in the response appears in the retrieved chunks. A fast cross-encoder can score this. If faithfulness < threshold, reject the response and return a "not confident" fallback. This is the eval framework feedback loop.
+# In query pipeline:
+if not check_retrieval_confidence(retrieved_chunks):
+    return "I don't have information about this topic in my knowledge base."
+    # Don't call LLM — would hallucinate or make something up
+```
 
-**How does multi-tenant isolation work in the vector store?**
+This was one of ARIA's most impactful improvements. Before adding this gate, ARIA would confidently answer questions outside its knowledge base using LLM training data, leading to hallucinations. After: graceful "I don't know" responses.
 
-Every vector is stored with `tenant_id` metadata. Every query includes `filter: { tenant_id: current_tenant }`. This is enforced at the application layer — the query pipeline always injects the tenant filter. The tenant_id comes from the authenticated JWT, never from user input. In Pinecone, use namespaces (separate index per tenant for strong isolation at the cost of higher overhead) or metadata filters (shared index with per-query filtering — more efficient but relies on filter enforcement). For high-security use cases (healthcare, finance), separate indexes per tenant is safer despite the overhead.
+**Q: How does multi-tenant isolation work in the vector store?**
 
-**How would you handle a question that requires combining information from multiple documents?**
+Three levels of isolation:
 
-Multi-hop retrieval. First retrieval finds the most relevant chunk. The LLM partially answers and identifies what additional information is needed. Second retrieval targets that specific gap. This iterative retrieve-read cycle is how RAG agents work — not a single pass but a loop until the LLM has enough context. In ARIA, this was a simple two-hop: retrieve primary answer, retrieve supporting evidence. Full multi-hop agents can do 5–10 retrieval rounds for complex research questions.
+**Application layer (weakest but always present):** Every query is constructed with the current tenant's ID from JWT. Code never allows a query without `tenant_id` filter.
+
+**Metadata filter (Pinecone/Weaviate):** At query time, `filter: {"tenant_id": "org_xyz"}`. Vectors for other tenants exist in the same index but are filtered out before ANN search. Fast but relies on filter correctness.
+
+**Namespace isolation (strongest):** Pinecone namespaces = completely separate index per tenant. A namespace is like a separate index. Queries in namespace `org_xyz` cannot return results from `org_abc` even if filters are misconfigured. Higher infrastructure overhead but stronger security guarantee.
+
+For HIPAA/SOC2 compliance, use namespace isolation. For general enterprise, metadata filtering with code-level enforcement is sufficient.
+
+**Q: How would you handle a question that requires combining information from 3 separate documents?**
+
+This is multi-hop retrieval:
+
+```
+Hop 1: Retrieve top-5 chunks for the original question
+  Answer is partial: "The policy applies to..."
+  
+LLM identifies gap: "I need to know the definition of X to complete this answer"
+  
+Hop 2: Retrieve top-5 chunks for the identified gap
+  "What is the definition of X in policy context?"
+
+LLM now has enough context to compose a complete answer
+
+# Implementation: agentic loop
+def multi_hop_rag(query: str, max_hops: int = 3) -> str:
+    context_chunks = []
+    current_query = query
+    
+    for hop in range(max_hops):
+        new_chunks = retrieve_and_rerank(current_query)
+        context_chunks.extend(new_chunks)
+        
+        # Ask LLM: can you answer now, or do you need more info?
+        response = llm.complete(f"""
+        Context: {format_chunks(context_chunks)}
+        Question: {query}
+        
+        If you can answer fully, do so.
+        If you need more information, respond with:
+        NEED_MORE: [what specific information is missing]
+        """)
+        
+        if not response.startswith("NEED_MORE:"):
+            return response  # answered fully
+        
+        # Extract what's needed and search again
+        current_query = response.replace("NEED_MORE:", "").strip()
+    
+    return llm.complete(final_prompt_with_all_context)
+```
+
+ARIA used a simplified 2-hop version. Full multi-hop is standard in RAG agent frameworks (LangGraph, LlamaIndex's ReAct agent).

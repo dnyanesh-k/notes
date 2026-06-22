@@ -1,24 +1,80 @@
-# Q15: Design Real-time Error Monitoring and Alerting System (Sentry-like)
+# Q15: Design an Error Monitoring System (Sentry)
+
+---
+
+## How to Approach This in an Interview
+
+Error monitoring is deceptively complex. The basic idea — "collect errors, show them" — sounds simple. The hard parts are: (1) intelligently grouping thousands of similar errors into one issue so you don't drown developers in noise, (2) storing billions of events cheaply, and (3) alerting precisely — enough to catch real problems, not enough to cause alert fatigue. Lead with the grouping algorithm, because that's what separates Sentry from just a logging service.
 
 ---
 
 ## Clarifying Questions
 
-First — what are we monitoring: application errors (exceptions, stack traces), infrastructure metrics (CPU, memory, latency), or both? Sentry-style focuses on errors; Datadog/Prometheus covers metrics. They have different data models.
+**1. What sources?**
 
-What's the scale — how many events per second, and how many services are we monitoring? And what's the retention — do we need errors from 6 months ago or just last 7 days?
+"Backend errors only, or also frontend (JavaScript), mobile (iOS/Android), and CLIs?"
 
-What are the alerting requirements — real-time (within seconds of an error spike) or near-real-time (minutes)? And who gets alerted — PagerDuty on-call, Slack channel, email?
+*Why this matters:* Backend errors have stack traces. JavaScript needs source map deobfuscation before the stack trace makes sense. Mobile crash reports come in different formats. Each needs different processing.
 
-Do we need error grouping (deduplication) — the same exception happening 1,000 times should be one alert, not 1,000? This is Sentry's core value — it's harder than it looks.
+**2. Volume and retention?**
 
-*Assuming: application error monitoring (exceptions + stack traces), 10,000 services, 100K events/sec at peak, 30-day retention, real-time alerting within 30 seconds, automatic error grouping by fingerprint, Slack + PagerDuty notifications.*
+"Millions of events/day or billions? How long should raw events be kept — 30 days, 90 days?"
+
+*Why this matters:* At 1B events/day, you cannot store all of them forever. You need a purpose-built analytical database (ClickHouse) and a sampling strategy.
+
+**3. What alerting behavior?**
+
+"Alert on new issues only, or also on volume spikes (error rate suddenly 10×), regressions (issue was resolved, now happening again)?"
+
+*Why this matters:* Three alerting scenarios require different detection logic. Most teams care about all three.
+
+**4. Performance monitoring (APM)?**
+
+"Just errors, or also slow transactions (latency profiling, N+1 query detection)?"
+
+*Why this matters:* APM adds distributed tracing (Jaeger/OpenTelemetry), a different data model, and much higher event volume. Start with errors, extend to APM.
+
+### Assumptions
+
+```
+- Sources: backend (Python, Node.js), frontend (JavaScript), mobile (iOS crash reports)
+- Volume: 1B raw events/day = 11,574 events/second
+- Retention: raw events 30 days, aggregated stats 2 years
+- Alerting: new issues, regressions, frequency spikes, user impact threshold
+- Client-side sampling: configurable (send only 10% of errors above rate limit)
+- Source map deobfuscation for JavaScript stack traces
+- Distributed tracing: link errors to trace IDs
+```
 
 ---
 
-## Scope
+## Back-of-Envelope Math
 
-I'll design: SDK for capturing errors, ingestion pipeline, error grouping and deduplication, storage, alerting engine, and the dashboard serving layer. This is a real-time data pipeline problem with some interesting grouping/fingerprinting challenges.
+```
+Events: 1B/day = 11,574 events/sec peak
+
+Event payload: ~2KB average (exception type, message, stack trace, 
+                              user context, request headers, breadcrumbs)
+Ingest bandwidth: 11,574 × 2KB = ~23MB/sec = ~2TB/day raw event data
+
+Storage:
+  ClickHouse (events, 30 days): 2TB/day × 30 = 60TB
+    ClickHouse compression: ~10:1 for repetitive log-like data → 6TB actual disk
+    
+  PostgreSQL (issues table):
+    1B events/day, ~1M unique issues after grouping
+    Issues table: 1M rows × 2KB = 2GB → very manageable
+    
+Issue grouping:
+  Goal: 1B events → ~1M issues (1000:1 compression)
+  Same exception + stack trace → same fingerprint → same issue
+  This is the core algorithm that makes the system usable
+  
+Alert evaluation:
+  Check alerting rules every 60 seconds
+  10,000 organizations × 5 rules each = 50,000 rule evaluations/minute = 833/sec
+  → Single Redis + ClickHouse cluster handles this easily
+```
 
 ---
 
@@ -27,343 +83,744 @@ I'll design: SDK for capturing errors, ingestion pipeline, error grouping and de
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    ERROR MONITORING SYSTEM                                  │
-│                                                                             │
-│  APPLICATION SERVICES                                                       │
-│  ┌───────────┐ ┌───────────┐ ┌───────────┐                                │
-│  │ Service A │ │ Service B │ │ Service C │  ← SDK installed in each        │
-│  │  (SDK)    │ │  (SDK)    │ │  (SDK)    │                                │
-│  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘                                │
-│        │             │             │                                        │
-│        └─────────────┼─────────────┘                                        │
-│                      │ HTTPS (error events)                                 │
-│                      ▼                                                      │
-│            ┌─────────────────┐                                             │
-│            │  Ingestion API  │  ← rate limiting, auth, validation          │
-│            │  (stateless)    │                                             │
-│            └────────┬────────┘                                             │
-│                     │                                                       │
-│                     ▼                                                       │
-│             ┌──────────────┐                                               │
-│             │    Kafka     │  ← buffer for burst traffic                   │
-│             │ (error.raw)  │                                               │
-│             └──────┬───────┘                                               │
-│                    │                                                        │
-│       ┌────────────┼────────────┐                                          │
-│       ▼            ▼            ▼                                          │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐                                   │
-│  │ Grouping │ │ Storage  │ │ Alerting │                                   │
-│  │ Worker   │ │ Worker   │ │ Engine   │                                   │
-│  └──────────┘ └──────────┘ └──────────┘                                   │
-│       │            │            │                                           │
-│       ▼            ▼            ▼                                           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐                           │
-│  │  Redis   │ │ClickHouse│ │ PagerDuty/Slack   │                           │
-│  │ (groups  │ │ (events  │ │ (notifications)   │                           │
-│  │  state)  │ │ storage) │ └──────────────────┘                           │
-│  └──────────┘ └──────────┘                                                 │
-│                                                                             │
-│            ┌──────────────────────────────────────┐                        │
-│            │         Dashboard API                 │                        │
-│            │  (query ClickHouse for UI rendering)  │                        │
-│            └──────────────────────────────────────┘                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+│                                                                              │
+│  SDK (Python/JS/iOS)                                                        │
+│      │ HTTP POST /events                                                    │
+│      ▼                                                                      │
+│  ┌────────────────┐                                                         │
+│  │  Ingest API    │  → Rate limiting (per DSN key)                         │
+│  │  (stateless)   │  → Basic validation                                    │
+│  │  100 replicas  │  → Publish to Kafka                                    │
+│  └────────────────┘                                                         │
+│          │                                                                   │
+│          ▼ Kafka (raw events)                                               │
+│  ┌────────────────────────────────────────────────────────────┐            │
+│  │         Event Processing Workers                            │            │
+│  │                                                            │            │
+│  │  1. Source map deobfuscation (JS stack traces)             │            │
+│  │  2. Fingerprinting (grouping algorithm)                    │            │
+│  │  3. Create/update Issue in PostgreSQL                      │            │
+│  │  4. Store event in ClickHouse                              │            │
+│  │  5. Update aggregation counters                            │            │
+│  │  6. Check alerting rules → trigger alerts                  │            │
+│  └────────────────────────────────────────────────────────────┘            │
+│                                                                              │
+│  STORAGE                                                                    │
+│  ┌──────────────────────┐  ┌───────────────────────────────────────────┐   │
+│  │ PostgreSQL           │  │ ClickHouse                                 │   │
+│  │ - projects           │  │ - events (raw, 30 days)                   │   │
+│  │ - issues (groups)    │  │ - issue_hourly_stats (2 years)            │   │
+│  │ - alert_rules        │  │ Fast columnar queries:                    │   │
+│  │ - users, settings    │  │   "top 10 errors last 24h by user impact" │   │
+│  └──────────────────────┘  └───────────────────────────────────────────┘   │
+│                                                                              │
+│  DASHBOARD: React SPA, queries both PostgreSQL (issues list) +              │
+│             ClickHouse (event trends, user impact analytics)                │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Deep Dive 1 — The SDK (Client-side Capture)
+## Part 1: The SDK and Event Ingestion
 
-The SDK lives in every monitored application. It must be: low overhead (can't slow down the app), reliable (buffer offline events), and smart (capture useful context, not just the error message).
-
-**What the SDK captures:**
+### Client SDK Design
 
 ```python
-# What happens when an unhandled exception occurs
-import sentry_sdk
+# sentry_sdk/__init__.py (simplified)
 
-def capture_exception(exc: Exception):
-    event = {
-        'event_id': uuid4(),
-        'timestamp': datetime.utcnow().isoformat(),
-        'level': 'error',
-        'exception': {
-            'type': type(exc).__name__,          # 'ValueError', 'DatabaseError'
-            'value': str(exc),                    # 'Connection refused to localhost:5432'
-            'stacktrace': {
-                'frames': format_stack_trace(exc) # file, line number, function, code snippet
-            }
-        },
-        'environment': os.environ.get('ENV', 'production'),
-        'release': os.environ.get('GIT_COMMIT', 'unknown'),
-        'user': { 'id': current_user_id() },     # who triggered the error
-        'tags': { 'service': 'payments-api', 'region': 'us-east-1' },
-        'extra': {                                # additional context
-            'request_id': request_id,
-            'url': request.path,
-            'method': request.method,
-        },
-        'breadcrumbs': recent_log_entries()       # last 10 log lines before error
-    }
+import sys
+import traceback
+import threading
+import queue
+from typing import Optional
+
+class SentryClient:
+    def __init__(self, dsn: str, sample_rate: float = 1.0, 
+                 environment: str = "production"):
+        self.dsn = DSN.parse(dsn)  # extracts project_id, public_key, host
+        self.sample_rate = sample_rate
+        self.environment = environment
+        
+        # Buffer: events queue, background thread flushes asynchronously
+        self._queue = queue.Queue(maxsize=100)
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
+        
+        # Install exception hook (captures unhandled exceptions automatically)
+        self._original_excepthook = sys.excepthook
+        sys.excepthook = self._handle_unhandled_exception
     
-    # Buffer in memory queue (never block the main thread)
-    background_queue.put(event)
+    def capture_exception(self, exc: Exception, 
+                          user_context: dict = None) -> Optional[str]:
+        """Called manually or automatically by exception hook."""
+        
+        # Client-side sampling: drop (1 - sample_rate) fraction of events
+        # Reduces data volume at the source; prevents billing explosions during error storms
+        import random
+        if random.random() > self.sample_rate:
+            return None
+        
+        # Build the event payload
+        event = {
+            "event_id": generate_uuid4(),
+            "timestamp": datetime.utcnow().isoformat(),
+            "exception": {
+                "type": type(exc).__name__,
+                "value": str(exc),
+                "stacktrace": extract_stacktrace(exc)
+            },
+            "platform": "python",
+            "environment": self.environment,
+            "release": os.environ.get("SENTRY_RELEASE"),
+            "user": user_context,
+            # Breadcrumbs: last 100 logs leading up to this error
+            "breadcrumbs": self._breadcrumb_buffer.get_last(100)
+        }
+        
+        # Enqueue (non-blocking — never slow down the application)
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            # Queue is full → drop event (circuit breaker: SDK never crashes the app)
+            pass
+        
+        return event["event_id"]
+    
+    def _worker_loop(self):
+        """Background thread: flush events to Sentry server."""
+        while True:
+            events = []
+            # Batch up to 10 events, or flush every 2 seconds
+            deadline = time.time() + 2.0
+            while time.time() < deadline and len(events) < 10:
+                try:
+                    event = self._queue.get(timeout=0.1)
+                    events.append(event)
+                except queue.Empty:
+                    break
+            
+            if events:
+                self._send_envelope(events)
+    
+    def _send_envelope(self, events: list[dict]):
+        """Send events to ingest API."""
+        envelope = {
+            "dsn": str(self.dsn),
+            "events": events
+        }
+        try:
+            requests.post(
+                f"https://ingest.sentry.io/api/{self.dsn.project_id}/envelope/",
+                json=envelope,
+                headers={"X-Sentry-Auth": f"Sentry sentry_key={self.dsn.public_key}"},
+                timeout=5
+            )
+        except Exception:
+            pass  # SDK failures must NEVER affect the application
+
+def extract_stacktrace(exc: Exception) -> list[dict]:
+    tb = traceback.extract_tb(exc.__traceback__)
+    return [
+        {
+            "filename": frame.filename,
+            "lineno": frame.lineno,
+            "function": frame.name,
+            "context_line": frame.line  # the actual line of code
+        }
+        for frame in tb
+    ]
 ```
 
-**SDK design principles:**
-- **Non-blocking:** all sends happen on a background thread. A slow error API never blocks the main app thread.
-- **Buffering:** if the network is unavailable, buffer up to 100 events in memory. On reconnection, flush.
-- **Sampling:** for high-frequency errors (same error happening 10K times/sec), sample 1% and send — don't flood the ingestion API. The server extrapolates counts.
-- **PII scrubbing:** automatically redact credit card patterns, passwords from form fields, session tokens from headers before sending.
+**Why background thread + queue?**
+
+If the SDK sent events synchronously, every exception would add 50-100ms HTTP latency to your application. During an error storm (100 errors/sec), this would be catastrophic. The background thread decouples event sending from the application's request path entirely.
+
+**Client-side sampling:**
+
+Without sampling, a single misconfigured endpoint that throws 10,000 errors/minute would flood your Sentry quota and obscure other issues. The `sample_rate` parameter (0.0-1.0) drops events randomly at the source. 10% sampling = 1,000 events/minute instead of 10,000. The system compensates for sampling in volume calculations: if sample_rate=0.1 and we received 1,000 events, the actual occurrence count is ~10,000.
 
 ---
 
-## Deep Dive 2 — Error Grouping (Fingerprinting)
+## Part 2: Event Processing Workers
 
-This is Sentry's core technical innovation. The same bug produces thousands of identical errors — we need to group them into one "issue" with a count, not show 10,000 individual events.
+### Source Map Deobfuscation
 
-**How fingerprinting works:**
+JavaScript deployed to production is minified. A minified stack trace looks like:
 
-Two errors belong to the same group if they have the same **fingerprint** — a hash of the key identifying features of the error.
+```
+at t.fn (bundle.min.js:1:28947)
+```
+
+Useless. The source map maps minified position → original filename + line:
+
+```
+original: at handlePaymentSubmit (src/components/Checkout.tsx:127)
+```
+
+```python
+def deobfuscate_javascript_stack(stack_frames: list[dict], 
+                                  release: str, 
+                                  project_id: str) -> list[dict]:
+    """Apply source maps to transform minified positions to original code."""
+    
+    import sourcemap  # Python sourcemap library
+    
+    deobfuscated = []
+    for frame in stack_frames:
+        source_map = fetch_source_map(
+            project_id=project_id,
+            release=release,
+            filename=frame['filename']
+        )
+        
+        if source_map is None:
+            deobfuscated.append(frame)  # can't deobfuscate, keep as-is
+            continue
+        
+        # Map (line, column) in minified file → (filename, line, col) in original
+        original = source_map.lookup(line=frame['lineno'], column=frame['colno'])
+        
+        deobfuscated.append({
+            "filename": original.src,            # "src/components/Checkout.tsx"
+            "lineno": original.src_line,         # 127
+            "function": original.name or frame['function'],
+            "context_line": fetch_original_line(original.src, original.src_line, release)
+        })
+    
+    return deobfuscated
+```
+
+Source maps are uploaded to S3 as part of the deployment process (`sentry-cli upload-sourcemaps ./dist`). The worker fetches the relevant source map by `{project_id}/{release}/{filename}.map`.
+
+---
+
+## Part 3: Fingerprinting — The Core Algorithm
+
+**Why does fingerprinting matter?**
+
+Without intelligent grouping, 1B events/day = 1B separate issues. Every developer's inbox would be flooded with millions of notifications for what are essentially the same bug. Fingerprinting is the algorithm that groups events into issues.
+
+**The basic fingerprint:**
 
 ```python
 def compute_fingerprint(event: dict) -> str:
-    exc = event['exception']
-    stacktrace = exc['stacktrace']['frames']
+    """
+    Two events with the same fingerprint are the same issue.
+    Changes to fingerprint algorithm = issues get split or merged.
+    """
+    exception = event.get('exception', {})
+    exc_type = exception.get('type', 'unknown')
     
-    # Fingerprint based on: exception type + top 3 frames of the stack
-    # Exclude variable parts: line numbers that change with minor edits,
-    # dynamic values in error messages (user IDs, timestamps)
+    # Stack trace normalization: strip variable parts
+    stack_frames = exception.get('stacktrace', [])
     
-    fingerprint_parts = [
-        exc['type'],                      # 'DatabaseError'
-        normalize_message(exc['value']),  # strip dynamic values
+    # Filter to application frames only (exclude library frames)
+    # Library frames (site-packages, node_modules) vary by version
+    # but don't identify WHERE in YOUR code the bug is
+    app_frames = [
+        f for f in stack_frames
+        if not is_library_frame(f['filename'])
     ]
     
-    # Add top 3 relevant stack frames (skip library frames)
-    app_frames = [f for f in stacktrace if '/site-packages/' not in f['filename']]
-    for frame in app_frames[:3]:
-        fingerprint_parts.append(f"{frame['filename']}:{frame['function']}")
+    # Use the top 3 application frames in the fingerprint
+    # Top = most recent (closest to where the exception was thrown)
+    key_frames = app_frames[-3:] if len(app_frames) >= 3 else app_frames
     
-    fingerprint = sha256('|'.join(fingerprint_parts)).hexdigest()[:16]
-    return fingerprint
+    # Normalize each frame: just filename + function name (not line number)
+    # Line numbers change when code is refactored; we want same function = same issue
+    frame_keys = []
+    for frame in key_frames:
+        # Strip absolute path, keep relative: /app/src/payment.py → payment.py
+        filename = normalize_filename(frame['filename'])
+        func = frame.get('function', '<unknown>')
+        frame_keys.append(f"{filename}:{func}")
+    
+    # Include the exception type + message prefix
+    # "ValueError: invalid literal for int() with base 10: ''"
+    # → strip the variable part ("''") → "ValueError: invalid literal for int() with base 10:"
+    message_key = normalize_message(
+        exc_type=exc_type,
+        message=exception.get('value', '')
+    )
+    
+    raw_key = "|".join([message_key] + frame_keys)
+    return hashlib.sha256(raw_key.encode()).hexdigest()[:16]
 
-def normalize_message(message: str) -> str:
-    # Remove dynamic content that changes between occurrences
-    message = re.sub(r'\b\d+\b', 'NUM', message)      # numbers → NUM
-    message = re.sub(r'user_\w+', 'USER', message)    # user IDs → USER
-    message = re.sub(r'\b[0-9a-f]{8}-[0-9a-f-]+\b', 'UUID', message)  # UUIDs
-    return message
+def normalize_message(exc_type: str, message: str) -> str:
+    """Remove variable data from error messages."""
+    
+    # Remove: numbers, UUIDs, file paths, IP addresses
+    # "User 12345 not found" → "User <int> not found"
+    # "File /tmp/abc123.tmp not found" → "File <path> not found"
+    
+    patterns = [
+        (r'\b\d{5,}\b', '<int>'),          # long numbers (IDs)
+        (r'[0-9a-f]{8}-[0-9a-f]{4}-...', '<uuid>'),  # UUIDs
+        (r'/(?:tmp|var|home|app)/\S+', '<path>'),     # file paths
+        (r'\b\d{1,3}(?:\.\d{1,3}){3}\b', '<ip>'),    # IP addresses
+        (r"'[^']{0,50}'", '<str>'),                    # short quoted strings
+    ]
+    
+    normalized = f"{exc_type}: {message}"
+    for pattern, replacement in patterns:
+        normalized = re.sub(pattern, replacement, normalized)
+    
+    return normalized
+
+def is_library_frame(filename: str) -> bool:
+    library_paths = ['site-packages', 'node_modules', 'dist-packages', 
+                     '/usr/lib/', 'Python3.']
+    return any(path in filename for path in library_paths)
 ```
 
-**Grouping logic:**
+**Result:** Two events from different users, different request IDs, but the same `NullPointerException` in `payment.py:process_payment()` → same fingerprint → same issue. One notification, one issue to investigate.
+
+**Custom fingerprinting (developer override):**
+
+Sentry allows developers to set custom fingerprints:
 
 ```python
-class GroupingWorker:
-    def process(self, event: dict):
-        fingerprint = compute_fingerprint(event)
-        
-        # Redis tracks group state
-        group_key = f"group:{event['project_id']}:{fingerprint}"
-        
-        group = redis.hgetall(group_key)
-        if not group:
-            # First occurrence — create new group
-            group = {
-                'fingerprint': fingerprint,
-                'first_seen': event['timestamp'],
-                'last_seen': event['timestamp'],
-                'count': 1,
-                'status': 'unresolved',
-                'title': f"{exc_type}: {normalized_message}"
-            }
-            redis.hmset(group_key, group)
-            
-            # Persist to PostgreSQL
-            db.insert('issue_groups', group)
-        else:
-            # Existing group — increment counter, update last_seen
-            redis.hincrby(group_key, 'count', 1)
-            redis.hset(group_key, 'last_seen', event['timestamp'])
-            
-            # Periodic sync to PostgreSQL (every 60 seconds or every 100 events)
-            self.schedule_db_sync(fingerprint)
-        
-        # Tag the raw event with its group ID for later retrieval
-        event['group_id'] = fingerprint
-        kafka_producer.send('events.processed', event)
+with push_scope() as scope:
+    scope.fingerprint = ["database-connection", "timeout"]
+    capture_exception(exc)
+# All database connection timeout errors → same issue, regardless of call stack
 ```
 
 ---
 
-## Deep Dive 3 — Storage Strategy
+## Part 4: Storage
 
-**Two data models for two query patterns:**
-
-1. **Group-level queries** (most common): "Show me all unresolved issues in project X, sorted by frequency." → PostgreSQL
-
-2. **Event-level queries** (drill-down): "Show me the 20 most recent occurrences of this specific error, with their full stack traces." → ClickHouse
+### ClickHouse for Events
 
 ```sql
--- PostgreSQL: issue groups (small table, fast aggregates)
-CREATE TABLE issue_groups (
-    id              BIGINT PRIMARY KEY AUTO_INCREMENT,
-    project_id      BIGINT NOT NULL,
-    fingerprint     VARCHAR(32) NOT NULL,
-    title           VARCHAR(500) NOT NULL,
-    exception_type  VARCHAR(200),
-    status          ENUM('unresolved','resolved','ignored') DEFAULT 'unresolved',
-    first_seen      TIMESTAMP NOT NULL,
-    last_seen       TIMESTAMP NOT NULL,
-    event_count     BIGINT DEFAULT 1,
-    user_count      BIGINT DEFAULT 1,
-    assigned_to     BIGINT,             -- team member assigned to fix this
-    UNIQUE KEY uk_project_fp (project_id, fingerprint),
-    INDEX idx_project_status (project_id, status, last_seen DESC)
-);
-
--- PostgreSQL: project and alert configuration
-CREATE TABLE alert_rules (
-    id              BIGINT PRIMARY KEY,
-    project_id      BIGINT NOT NULL,
-    condition       ENUM('new_issue','regression','frequency_spike'),
-    threshold       INT,                -- e.g., 100 events in 5 minutes
-    window_minutes  INT,
-    channel         ENUM('slack','pagerduty','email'),
-    channel_config  JSON,               -- webhook URLs, email addresses
-    is_active       BOOLEAN DEFAULT TRUE
-);
-```
-
-```sql
--- ClickHouse: raw events (append-only, time-series, high-volume)
-CREATE TABLE error_events (
+-- ClickHouse events table (stores raw events for 30 days)
+CREATE TABLE events (
+    -- Core fields
     event_id        UUID,
     project_id      UInt64,
-    group_id        String,             -- fingerprint
-    timestamp       DateTime,
-    level           LowCardinality(String),
-    exception_type  String,
-    exception_value String,
-    stacktrace      String,             -- JSON blob
-    environment     LowCardinality(String),
+    issue_id        UInt64,
+    
+    -- Exception details
+    exc_type        LowCardinality(String),   -- 'NullPointerException'
+    exc_message     String,
+    
+    -- Context
+    environment     LowCardinality(String),  -- 'production', 'staging'
     release         String,
-    user_id         String,
-    tags            String,             -- JSON
-    PRIMARY KEY (project_id, timestamp, event_id)
+    user_id         Nullable(String),
+    
+    -- Timestamps
+    timestamp       DateTime,
+    received_at     DateTime DEFAULT now(),
+    
+    -- Full payload (for event detail view)
+    payload         String,                   -- JSON blob with full event
+    
+    -- Partitioning: delete old data by dropping partition
+    date            Date DEFAULT toDate(timestamp)
 ) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(timestamp)      -- partition by month for efficient pruning
-ORDER BY (project_id, timestamp)      -- sort key: queries filter by project + time
-TTL timestamp + INTERVAL 30 DAY;      -- auto-delete events older than 30 days
+PARTITION BY toYYYYMM(date)      -- one partition per month
+ORDER BY (project_id, issue_id, timestamp)   -- primary sort key: efficient for issue drilldowns
+TTL date + INTERVAL 30 DAY DELETE;           -- auto-delete records older than 30 days
 ```
 
-ClickHouse is purpose-built for this workload: high-write-throughput append-only events, column-oriented storage (fast aggregations: `COUNT(*) WHERE project_id = X AND timestamp > NOW() - 1 hour`), and built-in TTL for auto-expiry.
+**Why ClickHouse, not PostgreSQL?**
+
+At 1B events/day × 30 days = 30B rows, PostgreSQL would struggle with analytical queries like "count errors by issue over the last 7 days by hour." PostgreSQL is row-oriented — it reads every column to answer aggregation queries. ClickHouse is column-oriented: it reads only `(project_id, issue_id, timestamp)` — the three columns used in the WHERE/GROUP BY — skipping the large `payload` column entirely.
+
+Query comparison (30B rows, 7 days, group by hour):
+
+- PostgreSQL: sequential scan, 10-30 minutes
+- ClickHouse: column scan, 2-5 seconds
+
+**Pre-aggregated stats table** (for dashboard without hitting raw events):
+
+```sql
+CREATE TABLE issue_hourly_stats (
+    project_id    UInt64,
+    issue_id      UInt64,
+    hour          DateTime,    -- truncated to hour
+    
+    event_count   UInt64,      -- how many events in this hour
+    user_count    UInt64,      -- how many unique users affected (HyperLogLog estimate)
+    
+    -- HyperLogLog: probabilistic count of unique users
+    -- Exact count: "store every user_id, COUNT(DISTINCT)" → massive storage
+    -- HyperLogLog: 1.5KB of state, 1-2% error, handles billions of distinct values
+    user_hll      AggregateFunction(uniq, String)
+) ENGINE = AggregatingMergeTree()
+PARTITION BY toYYYYMM(hour)
+ORDER BY (project_id, issue_id, hour);
+
+-- This table is updated every minute from the raw events table
+-- Dashboard queries use this instead of raw events (1000x faster)
+```
+
+### PostgreSQL for Issues
+
+```sql
+CREATE TABLE issues (
+    id              BIGINT       PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    project_id      BIGINT       NOT NULL REFERENCES projects(id),
+    fingerprint     CHAR(16)     NOT NULL,           -- the computed fingerprint
+    
+    -- Classification
+    title           VARCHAR(500) NOT NULL,           -- "NullPointerException at payment.py:42"
+    exc_type        VARCHAR(200) NOT NULL,
+    exc_message     TEXT,
+    platform        VARCHAR(50)  NOT NULL,           -- 'python', 'javascript', 'ios'
+    
+    -- Status
+    status          ENUM('unresolved', 'resolved', 'ignored') DEFAULT 'unresolved',
+    
+    -- Aggregated counters (updated on every event)
+    event_count     BIGINT       NOT NULL DEFAULT 0,
+    user_count      INT          NOT NULL DEFAULT 0,  -- approximate (HyperLogLog)
+    
+    -- Timing
+    first_seen      TIMESTAMP    NOT NULL,
+    last_seen       TIMESTAMP    NOT NULL,
+    
+    -- Regression detection
+    resolved_at     TIMESTAMP,           -- NULL if never resolved
+    
+    -- Assignment
+    assigned_to     BIGINT       REFERENCES users(id),
+    
+    UNIQUE (project_id, fingerprint),    -- same fingerprint = same issue
+    INDEX idx_project_status (project_id, status, last_seen),
+    INDEX idx_project_fingerprint (project_id, fingerprint)
+);
+```
+
+**Event processing (create or update issue):**
+
+```python
+def process_event(event: dict):
+    # 1. Deobfuscate stack trace (if JavaScript)
+    if event['platform'] == 'javascript':
+        event['exception']['stacktrace'] = deobfuscate_javascript_stack(
+            event['exception']['stacktrace'],
+            event['release'],
+            event['project_id']
+        )
+    
+    # 2. Compute fingerprint
+    fingerprint = compute_fingerprint(event)
+    
+    # 3. Create or update issue (atomic upsert)
+    issue_id = db.execute("""
+        INSERT INTO issues (project_id, fingerprint, title, exc_type, 
+                           exc_message, platform, first_seen, last_seen)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (project_id, fingerprint)
+        DO UPDATE SET
+            last_seen = NOW(),
+            event_count = issues.event_count + 1,
+            status = CASE 
+                WHEN issues.status = 'resolved' THEN 'unresolved'  -- regression!
+                ELSE issues.status
+            END
+        RETURNING id, status, (xmax = 0) AS is_new, 
+                  (status = 'resolved' AND xmax != 0) AS is_regression
+    """, (event['project_id'], fingerprint, build_title(event), ...))
+    
+    # 4. Store raw event in ClickHouse
+    clickhouse.insert('events', [{
+        'event_id': event['event_id'],
+        'project_id': event['project_id'],
+        'issue_id': issue_id,
+        'exc_type': event['exception']['type'],
+        ...
+    }])
+    
+    # 5. Trigger alerts if needed
+    if issue_id.is_new:
+        trigger_new_issue_alert(issue_id, event)
+    elif issue_id.is_regression:
+        trigger_regression_alert(issue_id, event)
+    
+    return issue_id
+```
 
 ---
 
-## Deep Dive 4 — Alerting Engine
+## Part 5: Alerting Engine
 
-The alerting engine evaluates rules against incoming events and fires notifications.
-
-**Alert types:**
-
-```
-1. New Issue:    First occurrence of a fingerprint → alert immediately
-2. Regression:  A previously resolved issue reappears → alert immediately
-3. Frequency:   Error rate spikes (e.g., >100 events/5min for a group) → alert
-4. Volume:      Total error volume across project spikes by >50% vs previous hour
-```
-
-**Real-time frequency check:**
+### Three Alert Types
 
 ```python
-class AlertingEngine:
-    def check_alerts(self, event: dict):
-        project_id = event['project_id']
-        group_id = event['group_id']
-        
-        # Count events in sliding window using Redis sorted set
-        window_key = f"alert_window:{project_id}:{group_id}"
-        now = time.time()
-        
-        redis.zadd(window_key, { event['event_id']: now })
-        redis.zremrangebyscore(window_key, 0, now - 300)  # 5-minute window
-        
-        count_in_window = redis.zcard(window_key)
-        redis.expire(window_key, 600)   # TTL safety
-        
-        # Load alert rules for this project
-        rules = self.load_rules(project_id)  # cached in Redis
+class AlertEngine:
+    
+    # Alert Type 1: New Issue
+    def evaluate_new_issue_alerts(self, issue_id: int, project_id: int):
+        """Fire when a new issue is created for the first time."""
+        rules = db.get_alert_rules(project_id, trigger='new_issue')
         
         for rule in rules:
-            if rule.condition == 'frequency' and count_in_window >= rule.threshold:
-                if not self.is_rate_limited(project_id, group_id, rule.id):
-                    self.fire_alert(rule, event, count_in_window)
-                    self.set_alert_cooldown(project_id, group_id, rule.id, minutes=30)
+            # Filter: only alert if environment matches
+            if rule.environment and issue.environment != rule.environment:
+                continue
+            
+            self.fire_alert(rule, issue_id, 
+                            message=f"New issue detected: {issue.title}")
     
-    def fire_alert(self, rule: AlertRule, event: dict, count: int):
-        message = self.format_alert_message(rule, event, count)
+    # Alert Type 2: Frequency Spike (most important — catches error storms)
+    def evaluate_frequency_spike_alerts(self, project_id: int):
+        """
+        Fire when error rate spikes suddenly.
+        Strategy: compare last 1 hour to previous 24 hours average.
+        If current rate > 5× baseline, alert.
+        """
+        rules = db.get_alert_rules(project_id, trigger='frequency_spike')
         
-        if rule.channel == 'slack':
-            requests.post(rule.channel_config['webhook_url'], json={
-                "text": message,
-                "attachments": [self.build_slack_attachment(event)]
-            })
-        elif rule.channel == 'pagerduty':
-            pagerduty_client.trigger_incident(
-                title=f"Error spike in {event['project']}",
-                body=message,
-                severity='critical' if count > 1000 else 'warning'
-            )
+        for rule in rules:
+            # Query ClickHouse for recent vs baseline rates
+            stats = clickhouse.query("""
+                SELECT
+                    countIf(timestamp >= now() - INTERVAL 1 HOUR) AS last_1h,
+                    countIf(timestamp < now() - INTERVAL 1 HOUR 
+                            AND timestamp >= now() - INTERVAL 25 HOUR) / 24 AS baseline_1h
+                FROM events
+                WHERE project_id = %(project_id)s
+                  AND timestamp >= now() - INTERVAL 25 HOUR
+            """, {"project_id": project_id})
+            
+            spike_multiplier = stats['last_1h'] / max(stats['baseline_1h'], 1)
+            
+            if spike_multiplier > rule.threshold:
+                # Deduplicate: don't re-alert if already alerted in last 15 min
+                alert_key = f"alert:fired:{rule.id}"
+                if not redis.set(alert_key, "1", nx=True, ex=900):  # 15 min TTL
+                    continue  # already fired recently
+                
+                self.fire_alert(rule, 
+                                message=f"Error rate spike: {spike_multiplier:.1f}× baseline")
+    
+    # Alert Type 3: Regression (previously resolved issue reappears)
+    def evaluate_regression_alert(self, issue_id: int, project_id: int):
+        """
+        An issue was marked 'resolved' at some point.
+        Now a new event came in with the same fingerprint.
+        The fix didn't work — this is a regression.
+        """
+        issue = db.get_issue(issue_id)
+        
+        if issue.resolved_at is None:
+            return  # was never resolved, not a regression
+        
+        rules = db.get_alert_rules(project_id, trigger='regression')
+        for rule in rules:
+            self.fire_alert(rule, issue_id,
+                            message=f"Regression: '{issue.title}' reappeared "
+                                    f"(was resolved {issue.resolved_at})")
+    
+    def fire_alert(self, rule: AlertRule, issue_id: int = None, message: str = ""):
+        """Route alert to configured channels: email, Slack, PagerDuty, webhook."""
+        
+        alert = Alert(
+            rule_id=rule.id,
+            issue_id=issue_id,
+            message=message,
+            fired_at=datetime.now()
+        )
+        db.insert_alert(alert)
+        
+        for channel in rule.notification_channels:
+            if channel.type == 'slack':
+                slack_client.send_message(
+                    webhook=channel.webhook_url,
+                    text=f"[{rule.project_name}] {message}\n"
+                         f"View: https://sentry.io/issues/{issue_id}/"
+                )
+            elif channel.type == 'email':
+                email_service.send(
+                    to=channel.email_list,
+                    subject=f"[Sentry] {message}",
+                    body=build_alert_email(alert)
+                )
+            elif channel.type == 'pagerduty':
+                pagerduty_client.trigger_incident(
+                    routing_key=channel.routing_key,
+                    summary=message
+                )
 ```
 
-**Alert deduplication:** An alert rule that fires once should not fire again for the next 30 minutes for the same issue (unless the issue worsens). The cooldown period is stored in Redis with TTL. This prevents alert fatigue — the single biggest cause of on-call burnout.
+---
+
+## Part 6: User Impact Tracking
+
+**The killer feature:** "This error affected 1,247 unique users."
+
+```python
+# HyperLogLog for approximate unique user counting
+# Why HyperLogLog? 
+# Exact COUNT(DISTINCT user_id) requires storing every seen user_id
+# At 1B events × 100M users = terabytes just for user tracking
+# HyperLogLog: ~1.5KB of state, ~2% error, handles billions of items
+
+# In Redis (for real-time counting):
+def record_affected_user(issue_id: int, user_id: str):
+    redis.pfadd(f"issue:{issue_id}:users", user_id)  # PFADD: HyperLogLog add
+    # Current count estimate:
+    count = redis.pfcount(f"issue:{issue_id}:users")  # PFCOUNT: HyperLogLog count
+    
+    # Sync to PostgreSQL periodically
+    if should_sync():
+        db.update(f"UPDATE issues SET user_count = {count} WHERE id = {issue_id}")
+
+# In ClickHouse (for historical analytics):
+# The issue_hourly_stats table stores uniq() aggregate state
+# Merged across hours to get total unique users over any time range
+```
 
 ---
 
 ## Scale — What Breaks at 10x?
 
-At 1M events/sec:
+10x = 10B events/day = 115K events/sec peak.
 
-**Ingestion API:** Stateless, scale horizontally. 1M events/sec × 1KB average = 1 GB/sec ingestion. Run 50 ingestion servers behind a load balancer. Each server validates, deserializes, and publishes to Kafka. No DB calls in the hot path.
+**Ingest API:** Stateless, horizontally scalable. 100 replicas → 1000 replicas. AWS ECS or Kubernetes auto-scaling based on CPU.
 
-**Kafka:** At 1M events/sec × 1KB = 1 GB/sec, Kafka easily handles this with sufficient brokers (10–20 brokers × 100 MB/sec each = 1–2 GB/sec). Partition by `project_id` — events from the same project go to the same partition for ordered processing.
+**Kafka:**
 
-**Grouping workers:** The Redis sorted set for the sliding window and hash for group state are the hot path. At 1M events/sec, Redis needs cluster sharding by `project_id`. Grouping workers are CPU-bound (SHA256 fingerprinting). Scale: 1M events/sec × 1ms fingerprint time = 1,000 CPU-cores. That's actually fast — fingerprinting is sub-millisecond. 50–100 grouping worker processes handle this.
+Events at 115K/sec × 2KB = 230MB/sec ingest bandwidth. Kafka can handle 1GB/sec per broker. 3-5 broker cluster sufficient. Partition events by `project_id` for ordered processing per project.
 
-**ClickHouse:** Designed for 1M+ inserts/sec. Use batch inserts (not row-by-row): workers accumulate 1,000 events, write one batch insert per 100ms. ClickHouse handles bulk inserts efficiently. Replication across 3 nodes for durability. Partitioning by month ensures queries on recent data don't scan old partitions.
+**Processing workers:**
 
-**Dashboard queries:** Analysts query ClickHouse: `SELECT count(*), exception_type FROM error_events WHERE project_id = X AND timestamp > NOW() - 1 HOUR GROUP BY exception_type`. ClickHouse columnar storage makes this extremely fast (reads only the `exception_type` and `timestamp` columns, not the full row). Results in < 500ms even on billions of rows.
+Fingerprinting is CPU-bound (regex + SHA256). 115K events/sec at 1ms per event = 115 worker threads needed. Kafka consumer group: 100 workers consuming in parallel. Auto-scale based on consumer group lag.
+
+**ClickHouse:**
+
+At 10B events/day = 115K inserts/sec. Never insert one row at a time — batch inserts:
+
+```python
+# Worker buffers events for 1 second, then batch insert
+buffer = []
+for event in kafka_consumer:
+    buffer.append(build_clickhouse_row(event))
+    if len(buffer) >= 10000 or time_since_last_flush() > 1.0:
+        clickhouse.bulk_insert('events', buffer)  # 10K rows in one INSERT
+        buffer = []
+# ClickHouse insert performance: ~500K rows/sec per server → fine
+```
+
+**PostgreSQL (issues table):**
+
+Issue upserts: 115K events/sec but most are duplicates (same issue seen repeatedly). Actual new issues: ~1K/day across all projects. Rate limiting per project (max 1K unique issues/day/project) prevents runaway fingerprint generation.
+
+The `ON CONFLICT DO UPDATE` upsert is efficient but creates write contention on popular issues (1 issue that fires 100K times/sec). Solution: batch counter increments using Redis:
+
+```python
+# Instead of: UPDATE issues SET event_count = event_count + 1 on every event
+# Use Redis counter, flush to PostgreSQL every 30 seconds:
+redis.hincrby(f"issue:counters:{issue_id}", "event_count", 1)
+# Flush job (every 30s):
+for issue_id, counts in redis.hgetall_batch("issue:counters:*"):
+    db.execute(f"UPDATE issues SET event_count = event_count + {counts['event_count']} "
+               f"WHERE id = {issue_id}")
+```
 
 ---
 
 ## Trade-offs
 
-**ClickHouse vs Elasticsearch for error storage:** Elasticsearch is commonly used for log storage and supports full-text search (searching stack traces for "NullPointerException" across all events). But ClickHouse is 10–50x faster for aggregate queries (count errors by type, group by time window) and 5x cheaper for storage. The trade-off: ClickHouse doesn't support full-text search natively (use LIKE queries, slower). For error monitoring where aggregate queries dominate, ClickHouse wins. For log search where you need to search the raw message, Elasticsearch is better. Many companies use both: ClickHouse for metrics/aggregates, Elasticsearch for searchable raw logs.
+**Sampling vs full fidelity:**
 
-**Fingerprinting accuracy vs grouping precision:** Aggressive fingerprinting (hash only exception type + first frame) groups too aggressively — different bugs get merged. Conservative fingerprinting (hash entire stack trace) groups too loosely — the same bug with minor code changes creates separate groups. The right balance: hash type + normalized message + top 3 application frames, skip library frames. Allow manual group merging and splitting in the UI to correct mistakes.
+Full fidelity (capture every event): complete data, high cost, risk of overload.
 
-**Alert fatigue vs alert coverage:** Too many alerts and engineers stop paying attention (alert fatigue). Too few and real problems go undetected. Solutions: alert on error rate change (percentage spike from baseline), not absolute counts. Set cooldown periods. Allow issue muting. Group related alerts ("5 issues spiking in payments service" instead of 5 separate alerts). PagerDuty's grouping and snooze features help operationally.
+Sampling (capture X% of events): reduced cost, estimated counts, miss low-volume critical errors.
+
+**Hybrid sampling:** Head-based sampling (decide at event start): fast, simple, misses important events. Tail-based sampling (decide after seeing the full request): can sample based on outcome (always keep error traces, sample success traces at 1%), but requires keeping all traces in memory until decision. Sentry uses head-based sampling for simplicity; Jaeger supports tail-based for APM.
 
 ---
 
 ## Cross-Questions
 
-**How do you handle an error that occurs 1 million times per second — won't it overwhelm the system?**
+**Q: How do you handle the same issue appearing across multiple releases/versions?**
 
-Client-side sampling: the SDK samples a percentage of occurrences (configurable: `sample_rate=0.01` = 1%). The server extrapolates: received 1,000 events × sample_rate 0.01 = estimated 100,000 actual events. Sampling is deterministic per error fingerprint so the same event always either sends or not — it doesn't create inconsistent counts. Server-side rate limiting: at the ingestion API, if a project exceeds 10K events/sec, start dropping with a 429 and logging the drop count. The grouping worker uses a separate counter in Redis regardless of what was sampled — even sampled events increment the occurrence counter.
+Fingerprint is the same (same code path). Sentry groups them into one issue. But the events table stores `release` on each event. Dashboard query: "How many events for issue #123 by release?"
 
-**How do you handle errors across a distributed trace — a request that touches 5 microservices?**
+```sql
+-- ClickHouse: event counts by release (waterfall view)
+SELECT release, count() AS count
+FROM events
+WHERE issue_id = 123 AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY release
+ORDER BY count DESC;
 
-Distributed tracing (OpenTelemetry integration). Each request gets a `trace_id` generated at the entry point. Every service propagates this ID in its headers. When an error occurs in Service 3, the error event includes the `trace_id`. The monitoring system stores the trace relationship. In the dashboard: when you view an error event, you see the full distributed trace — which services were involved, where the latency was, which service caused the error. Sentry integrates with Jaeger and Zipkin for this. The trace_id links error events across services into a coherent story.
+-- Result:
+-- v2.3.1: 45,892  ← new release, lots of errors
+-- v2.3.0: 1,243   ← old release, some residual
+-- v2.2.5: 89      ← very old, almost gone
+-- → v2.3.1 introduced the regression
+```
 
-**How do you implement source maps for JavaScript errors (minified code makes stack traces unreadable)?**
+**Q: How do you handle PII in error messages?**
 
-JavaScript in production is minified — stack traces show `bundle.js:1:5432` not `src/components/Payment.jsx:45`. Source maps map minified positions back to original source. Workflow: during the build, generate source maps and upload them to the error monitoring service (not publicly — they're confidential). Store in S3 keyed by `release + filename`. When a JS error arrives, the grouping worker fetches the source map, applies the mapping, and stores the readable stack trace. The raw minified trace is also stored for debugging. Source maps should only be accessible to authenticated team members — they contain your full source code structure.
+Error messages often contain user data: "User john.doe@email.com not found", "Invalid SSN: 123-45-6789".
 
-**How do you calculate the error impact on users (user_count per issue)?**
+Server-side scrubbing (processing worker):
 
-Every error event includes `user_id` (if authenticated) or `session_id` (for anonymous users). The grouping worker maintains a HyperLogLog counter in Redis per group: `redis.pfadd(f"users:{group_id}", user_id)`. HyperLogLog gives an approximate distinct count with 0.81% error using only 12KB of memory regardless of how many users. `redis.pfcount(f"users:{group_id}")` → approximate unique users affected. For exact counts (for critical bugs), use a Redis Set (stores all user IDs, exact count, but grows with user count). Sync to PostgreSQL's `user_count` column every 5 minutes. "This error affected 47,293 users" is shown in the dashboard — this is what makes error monitoring immediately actionable for product teams.
+```python
+PII_PATTERNS = [
+    (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[email]'),
+    (r'\b\d{3}-\d{2}-\d{4}\b', '[ssn]'),
+    (r'\b(?:\d{4}[\s-]?){3}\d{4}\b', '[credit-card]'),
+]
 
-**How would you implement performance monitoring (not just errors — also slow endpoints)?**
+def scrub_pii(text: str) -> str:
+    for pattern, replacement in PII_PATTERNS:
+        text = re.sub(pattern, replacement, text)
+    return text
 
-Every SDK request span captures: `duration_ms`, `endpoint`, `status_code`. If duration > P95 threshold, emit a performance event (same pipeline as errors). The ingestion pipeline routes performance events to a separate Kafka topic. A performance aggregation worker computes P50/P95/P99 latency per endpoint per 1-minute window, stored in ClickHouse time-series format. Dashboard shows: latency trends over time, slowest endpoints, latency distribution histogram. Alert when P95 latency for a critical endpoint exceeds SLA (e.g., payment checkout P95 > 2 seconds). This is Sentry's Performance product — same infrastructure, different data shape.
+# Applied to: exc_message, breadcrumb data, request body (if logged)
+```
+
+SDK-side `before_send` hook (client-owned):
+
+```python
+def before_send(event, hint):
+    # Remove request body entirely (might contain passwords)
+    event.get('request', {}).pop('data', None)
+    return event
+
+sentry_sdk.init(dsn="...", before_send=before_send)
+```
+
+**Q: How do you build the "suspect commits" feature (which commit introduced this bug)?**
+
+When a new issue appears in release v2.3.1:
+1. Fetch the commit list between v2.3.0 (last release without this issue) and v2.3.1 from GitHub API.
+2. Compare the stack trace filenames to the files changed in each commit.
+3. Rank commits by: how many stack trace files did this commit touch? The highest-overlap commit is the "suspect commit."
+
+```python
+def find_suspect_commits(issue: Issue, current_release: str, 
+                         previous_release: str) -> list[Commit]:
+    # Get commits between the two releases
+    commits = github.compare_commits(
+        repo=project.github_repo,
+        base=previous_release,
+        head=current_release
+    )
+    
+    # Get files in the stack trace
+    stack_files = set(
+        normalize_filename(frame['filename']) 
+        for frame in issue.stacktrace_frames
+    )
+    
+    # Score each commit by overlap with stack files
+    scored = []
+    for commit in commits:
+        changed_files = set(f.filename for f in commit.files)
+        overlap = len(stack_files & changed_files)
+        if overlap > 0:
+            scored.append((commit, overlap))
+    
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [commit for commit, score in scored[:3]]  # top 3 suspect commits
+```
+
+This feature alone makes error monitoring orders of magnitude more valuable than raw logging — developers go from "there's an error" to "these 2 commits are probably responsible" in seconds.
