@@ -14,13 +14,13 @@ Software Engineer with 2.6 years of experience in enterprise AI engineering and 
 ### Software Engineer | CitiusTech Healthcare Technology Pvt. Ltd. | Sept 2024 – Present
 
 **Enterprise AI Assistant Platform**
-- Built a multi-agent AI system with MCP-based tool calling over Jira, AWS, GitHub, and Kubernetes — agent autonomously plans and executes multi-step healthcare data operations; sub-agent scoping via session-aware deduplication prevents cross-agent knowledge card bleed.
-- Implemented persona-based pre-tool authorization hooks with fail-closed enforcement in production — every tool call is authorized against a role policy before execution, with a knowledge-base re-read guard preventing stale edits in clinical workflows.
-- Built an eval framework using LLM-as-judge (Claude Sonnet via LiteLLM proxy) scoring investigation quality, knowledge base usage, and mock-environment awareness across real production scenarios.
+- Built a multi-agent AI system with MCP-based tool calling — given a production bug Jira ticket, the agent queries Grafana/Loki logs, inspects source code on GitHub, and raises PRs or Jira comments autonomously; a session-aware KB routing layer grounds every response before any tool executes.
+- Built semantic search and knowledge routing using FastMCP and FastEmbed (MiniLM) — cosine similarity search on a live-updating embedding index grounds LLM responses in verified internal docs before every tool call; enforced role-based guardrails with fail-closed policy per tool execution.
+- Built an eval framework using LLM-as-judge scoring retrieval and generation quality across ~200 tickets and Slack queries, measuring precision and recall for semantic search and assessing LLM response relevance, grounding, and hallucination to validate production readiness. 
 
 **Error Automation & ETL Pipeline**
-- Built ETL pipeline using Flask, pandas, Argo Workflows, and AWS S3 to extract and transform production error logs into structured Jira tickets and Slack alerts — automating 180+ daily ticket creations.
-- Eliminated 48 person-hours of daily manual effort via scheduled Argo Workflows pipelines running daily; deployed and maintained via GitHub Actions CI/CD.
+- Built a production error monitoring system that ingests daily error logs, classifies and deduplicates them, and automatically creates structured Jira tickets with Slack alerts — replacing a fully manual triage process across 180+ errors per day.
+- Automated end-to-end error monitoring and Jira ticketing workflows, reducing 8 hours of daily manual effort and automating 180+ daily ticket creations previously handled manually. 
 
 ---
 
@@ -31,10 +31,9 @@ Software Engineer with 2.6 years of experience in enterprise AI engineering and 
 
 ## Projects
 
-**VidyaTrack — School ERP SaaS** | FastAPI · Next.js · PostgreSQL · AWS · pgvector | [GitHub](#)
-- Built and deployed a production multi-tenant school management SaaS with fee management, attendance, test scores, admissions, and a parent-facing QR portal — actively used by real institutes.
+**VidyaTrack — Institute ERP SaaS** | FastAPI · Next.js · PostgreSQL · AWS | [GitHub](#)
+- Built and deployed a production multi-tenant institute management SaaS covering fee management, attendance, test scores, admissions, and a parent-facing QR portal — actively used by schools and coaching institutes with automated fee reminders and schema-managed production deployments.
 - Implemented tenant-level data isolation using JWT-based RBAC and scoped database queries, ensuring complete separation of institute data across all API endpoints.
-- Added pgvector-based semantic student search, automated fee reminder notifications, and managed schema evolution via Alembic migrations through production deployments.
 
 ---
 
