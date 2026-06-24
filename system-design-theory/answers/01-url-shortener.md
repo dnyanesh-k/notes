@@ -213,6 +213,7 @@ Because auto-increment IDs are unique by definition. The DB guarantees no two ro
 
 You can run `decode_base62("ekfO")` and get back `1000000`. This means you don't even need to store the `short_code` in the database — you can derive it from the ID. But we store it anyway for fast lookup.
 
+> **Feistel Cipher (Format-Preserving Encryption)** : This method is highly recommended because it keeps your database efficient while making the output look completely random. You still use your normal auto-incrementing IDs, but you scramble them mathematically before encoding them to Base62
 ---
 
 **Option B — MD5/SHA hash of the long URL (don't use this)**
