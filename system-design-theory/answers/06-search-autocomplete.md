@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+Search autocomplete is the feature that suggests completions as a user types into a search box. Google shows query suggestions after every keystroke, e-commerce platforms suggest product names, and IDEs suggest code completions. The system must return relevant suggestions in under 100 milliseconds — fast enough that the user perceives it as instantaneous and the suggestions keep up with their typing speed.
+
+The core data structure for autocomplete is the **trie** (prefix tree). A trie stores strings character by character, where each node represents a prefix and each path from root to a leaf represents a complete word or phrase. Given a prefix, traversing the trie to that node and collecting all leaf descendants gives all matching completions. The challenge is that a naive trie traversal can be slow at scale when there are billions of queries in the tree.
+
+In production, the trie is enhanced with popularity scores at each node so the system can return the top-K most searched completions for a given prefix without scanning every match. This avoids sorting large result sets on every request. The trie is typically prebuilt offline from query logs, indexed by frequency, and served from an in-memory cache or a dedicated low-latency data store.
+
+At scale, a single trie covering all possible prefixes is too large to fit on one machine and too slow to rebuild frequently. The solution is to shard the trie — for example, different servers handle different first-letter prefixes — and to update it periodically (every hour or day) from aggregated search logs rather than in real time. This makes the suggestions slightly stale but keeps latency predictable.
+
+Additional considerations include typeahead for multiple languages, handling typos and fuzzy matches, personalization (surfacing queries based on the user's own history), and filtering out offensive or banned terms from suggestions.
+
+---
+
 ## How to Approach This in an Interview
 
 Autocomplete has two separate systems: a **data pipeline** (computing the top suggestions) and a **serving layer** (returning them in <100ms as the user types). Interviewers often conflate the two — make sure you design both independently. The core data structure is a Trie, and you need to explain it from scratch with code.

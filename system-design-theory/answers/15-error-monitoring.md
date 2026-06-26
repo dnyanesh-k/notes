@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+An error monitoring system collects, aggregates, and surfaces errors that occur in production software so that engineering teams can identify issues, understand their impact, and fix them before they affect more users. Sentry is the most well-known example. Every time an unhandled exception occurs in an application, the monitoring system captures the error, its full stack trace, the request context, and the user affected, and groups it with all other occurrences of the same error for analysis.
+
+The core value is visibility. In a distributed system with dozens of services and millions of requests per day, errors happen constantly. Most are noise — transient network blips, client-side input errors, known edge cases. A small subset are critical — a new deployment broke a payment flow, a database query is suddenly timing out, a third-party API is returning 500s. Error monitoring filters the noise, groups related errors, and surfaces the ones that need attention, complete with the context needed to reproduce and fix them.
+
+The ingestion path must handle very high write throughput at low latency. An application crash can generate hundreds of error events per second from multiple servers simultaneously, and the monitoring system must never become a bottleneck or go down when the service it's watching is already under stress. This is typically achieved with a lightweight SDK on the client side that sends events asynchronously via a fire-and-forget mechanism, with a high-throughput event ingestion layer on the backend using message queues to decouple capture from processing.
+
+**Grouping** (also called fingerprinting) is the most technically interesting problem. The same bug in different conditions might produce slightly different error messages — different user IDs, different input values, different server names. The system must recognize that these are all the same underlying issue and group them together, showing a count of how many times it has happened and how many users it has affected.
+
+Alerting rules, release tracking (to correlate error spikes with deployments), performance monitoring (transaction traces alongside errors), and data retention policies are all standard components of a complete error monitoring design.
+
+---
+
 ## How to Approach This in an Interview
 
 Error monitoring is deceptively complex. The basic idea — "collect errors, show them" — sounds simple. The hard parts are: (1) intelligently grouping thousands of similar errors into one issue so you don't drown developers in noise, (2) storing billions of events cheaply, and (3) alerting precisely — enough to catch real problems, not enough to cause alert fatigue. Lead with the grouping algorithm, because that's what separates Sentry from just a logging service.

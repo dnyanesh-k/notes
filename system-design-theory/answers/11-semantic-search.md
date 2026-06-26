@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+Semantic search is a search system that finds results based on the meaning of a query rather than matching exact keywords. Traditional keyword search looks for the literal words in the query — if a user searches "car repair," only documents containing those exact words rank highly. Semantic search understands that "auto maintenance," "vehicle servicing," and "fixing my Toyota" all express the same intent and returns relevant results for all of them.
+
+The technology that makes this possible is **vector embeddings**. A trained neural model converts text — both the documents and the query — into high-dimensional numerical vectors that capture semantic meaning. Documents with similar meaning produce vectors that are close to each other in this vector space. Semantic search works by converting the user's query into a vector and finding the stored document vectors nearest to it, a process called approximate nearest neighbor (ANN) search.
+
+The ingestion side involves taking a corpus of documents, splitting them into meaningful chunks, passing each chunk through an embedding model, and storing the resulting vectors in a vector database like Pinecone, Weaviate, Qdrant, or pgvector. The embedding model must be chosen carefully — it determines what "similarity" means. A general-purpose model might not capture the nuances of medical or legal language as well as a domain-specific one.
+
+At query time, the user's input is embedded using the same model, and the vector database returns the top-K most similar vectors using ANN algorithms like HNSW or IVF-Flat. These approximate algorithms trade a small amount of accuracy for a large improvement in query speed, making million-scale search feasible in under 100 milliseconds.
+
+Hybrid search — combining semantic similarity with keyword (BM25) ranking using a re-ranker — typically outperforms either approach alone. Metadata filtering (restrict results to a specific date range, category, or tenant) is a critical production requirement, especially in multi-tenant enterprise deployments.
+
+---
+
 ## How to Approach This in an Interview
 
 Semantic search is RAG without the LLM generation step — you're returning ranked documents instead of generated answers. The core challenge is hybrid retrieval: combining dense (semantic) search with sparse (keyword) search via Reciprocal Rank Fusion. Know RRF inside-out. Also understand why HNSW parameters matter and how filtering interacts with vector search.

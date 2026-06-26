@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A file upload system allows users to store, retrieve, and manage files — images, videos, documents, backups — reliably in the cloud. Amazon S3, Google Cloud Storage, and Dropbox are the most well-known examples. The system must handle files ranging from a few kilobytes to several gigabytes, serve them to potentially millions of concurrent users, and guarantee that once a file is uploaded it is never lost.
+
+The fundamental challenge is that files are not like database rows. They are large binary blobs that cannot be efficiently stored or queried in a relational database. Instead, they are stored in object storage — flat key-value systems optimized for storing and retrieving large binary objects. The file is stored with a unique key (often a hash of the content or a UUID), and metadata about it (name, owner, size, content type) is stored separately in a database.
+
+Large file uploads introduce their own problems. Uploading a 2GB video as a single HTTP request is fragile — if the connection drops halfway through, the entire upload must restart. The standard solution is **multipart upload**: the client splits the file into smaller chunks (e.g., 5MB each), uploads each chunk independently, and the server reassembles them once all parts arrive. This makes uploads resumable and parallelizable.
+
+Reliability and durability are non-negotiable. Files must survive hardware failures, data center outages, and disk corruption. This is achieved through replication — storing multiple copies of each file across different physical locations. S3, for example, guarantees 99.999999999% durability by replicating data across multiple availability zones within a region.
+
+Access control, CDN integration for fast global delivery, versioning (keeping older versions of a file), and lifecycle policies (automatically deleting or archiving old files) are commonly expected in a complete design discussion.
+
+---
+
 ## How to Approach This in an Interview
 
 The key insight in file upload design is the **pre-signed URL pattern**: for any non-trivial file, your application servers should never touch the actual bytes. The client uploads directly to S3. Your servers only handle metadata. This keeps your application servers cheap and fast. Make sure you explain this clearly — it's the most important concept in this design.

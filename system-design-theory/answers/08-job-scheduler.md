@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A job scheduler is a system that executes tasks at a specified time or on a recurring schedule, without requiring a human to trigger them manually. Sending a weekly email digest, running a nightly database cleanup, generating monthly invoices, or refreshing a cache every 5 minutes are all jobs that a scheduler manages. Cron is the simplest example, but production systems need distributed schedulers that can handle millions of jobs reliably across multiple servers.
+
+The core requirement is **at-least-once execution** — every scheduled job must run, even if a server crashes, a process dies, or the network fails. Missing a job is usually worse than running it twice, especially for time-sensitive tasks. This reliability requirement is what makes a distributed job scheduler significantly more complex than a simple cron file on a single machine.
+
+The design centers around a **job store** and an **executor pool**. The job store (typically a database or Redis) holds all scheduled jobs with their next execution time, status, and retry configuration. Worker processes (executors) continuously poll or listen for jobs that are due, claim them atomically (using locks or row-level locking to prevent two workers from claiming the same job), execute them, and update their status. The atomic claim step is critical — without it, the same job runs twice simultaneously.
+
+At scale, the scheduler must handle job prioritization (some jobs are more urgent than others), retry logic with exponential backoff (failed jobs should retry after increasing delays), dead-letter queues (jobs that fail repeatedly should be flagged for human review), and distributed locking to prevent duplicate execution across multiple scheduler nodes.
+
+Recurrence patterns (run every Monday at 9am, run on the last day of every month) add parsing and scheduling complexity. Handling timezone-aware schedules, daylight saving time transitions, and jobs that missed their window due to downtime are edge cases that separate a toy implementation from a production system.
+
+---
+
 ## How to Approach This in an Interview
 
 Job scheduler looks deceptively simple ("just poll a table") but the interesting challenges are: how do you poll without two servers executing the same job simultaneously (distributed locking), what happens when a worker crashes mid-execution (heartbeat + watchdog), and how do you handle exactly-once semantics. Know these three deeply.

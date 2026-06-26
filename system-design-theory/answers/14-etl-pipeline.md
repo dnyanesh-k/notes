@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+An ETL (Extract, Transform, Load) pipeline is a data engineering system that moves data from source systems into a destination — typically a data warehouse or analytics database — where it can be queried and analyzed. Extract means pulling raw data from sources like application databases, APIs, logs, or third-party services. Transform means cleaning, reshaping, and enriching that data into a consistent format. Load means writing the transformed data into the destination where analysts and systems can use it.
+
+ETL is the backbone of analytics and business intelligence. Without it, operational data sits fragmented across dozens of source systems in formats that are optimized for transactions, not analysis. The pipeline brings it all together into a single, query-optimized store where complex reporting queries can run without impacting production systems.
+
+The core challenges are data volume, reliability, and schema evolution. At scale, ETL jobs process gigabytes to terabytes of data, often on a schedule (nightly, hourly, real-time). A job that runs for hours must be able to fail partway through and resume from its checkpoint rather than reprocessing everything. Idempotency is critical — running the same pipeline twice should not create duplicate rows in the destination.
+
+Schema evolution is a persistent operational pain. Source systems change — a column gets renamed, a field is removed, a new table is added. The ETL pipeline must handle these changes gracefully, with clear alerting when schemas drift unexpectedly, without breaking downstream consumers who depend on the existing data shape.
+
+Modern data pipelines also include data quality checks at each stage — asserting that row counts match expectations, that no required fields are null, that values fall within expected ranges — before the data is made available for reporting. This prevents silent bad data from polluting dashboards and decision-making.
+
+---
+
 ## How to Approach This in an Interview
 
 ETL is one of the most practical data engineering questions. Lead with the three phases (Extract, Transform, Load) but quickly show you understand the hard problems: handling incremental extraction efficiently, data quality failures in the middle of a pipeline, exactly-once semantics, and late-arriving data. The interesting discussion is usually CDC (Change Data Capture) vs polling, and when to use Spark vs dbt vs simple SQL.

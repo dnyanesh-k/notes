@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+An LLM-based chatbot at scale is a system that lets users have multi-turn conversations with a large language model — asking follow-up questions, referencing earlier parts of the conversation, and receiving coherent, context-aware responses. ChatGPT, Claude, and Gemini are the most visible examples, but the same architecture powers customer support bots, coding assistants, and internal Q&A tools inside organizations.
+
+The core challenge is **context management**. Unlike a stateless API request, a conversation has history. The model needs to see previous messages to understand what the user is referring to. LLMs process a fixed-length context window — currently ranging from 8K to 200K tokens depending on the model. Every conversation turn, the system must decide what history to include, how to truncate or summarize older messages when the conversation grows too long, and how to store and retrieve that history efficiently.
+
+At scale, inference is the dominant cost and latency bottleneck. LLMs are computationally expensive — running a single query against GPT-4 class models costs orders of magnitude more than a standard database lookup. The system must balance response quality (larger, more capable models), latency (streaming tokens to the user immediately rather than waiting for the full response), and cost (batching, caching repeated prompts, routing simple queries to smaller cheaper models).
+
+Streaming is expected in production. Users should see tokens appearing word by word rather than waiting 10–20 seconds for a complete response. This requires server-sent events or WebSocket connections and changes how the frontend renders responses.
+
+Session management, multi-user isolation, abuse prevention, content moderation, and prompt injection defense are all required in a production design. For enterprise deployments, conversation history must also be auditable and deletable to satisfy compliance requirements.
+
+---
+
 ## How to Approach This in an Interview
 
 LLM chatbot combines everything: RAG (Q9), streaming, session management, and cost control. The unique challenges here are: how do you stream tokens without dropping the connection (SSE), how do you manage conversation memory without ballooning prompt costs, and how do you control LLM API costs at scale (which is genuinely the limiting factor at production scale). Focus on these three.

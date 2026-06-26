@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A news feed system is responsible for generating and displaying a personalized stream of content for each user — posts, updates, and activity from people or accounts they follow. Twitter's timeline, LinkedIn's feed, and Instagram's home screen are all news feed systems. The feed is typically sorted by recency, relevance, or a combination of both using a ranking algorithm.
+
+The core challenge is that generating a feed on demand is expensive. When a user opens the app, the system would need to fetch all the people they follow, retrieve all their recent posts, merge them, sort them, and paginate — all in real time. For a user following thousands of accounts, this is too slow to be acceptable. The solution is to pre-compute feeds in the background and cache them, so the read is instant.
+
+There are two primary design approaches: **fan-out on write** and **fan-out on read**. Fan-out on write means when a user posts something, the system immediately pushes that post to the feeds of all their followers. Reads are fast because the feed is pre-built. The downside is the write cost for celebrities with millions of followers — one post triggers millions of feed updates. Fan-out on read means the feed is assembled at query time, which is cheaper to write but slower to read. Most production systems use a hybrid: fan-out on write for regular users, fan-out on read for high-follower accounts.
+
+Feed ranking adds another layer. A simple reverse-chronological feed is easy to build, but modern platforms use machine learning models to score and reorder posts based on engagement signals, user preferences, and content freshness. This ranking layer sits on top of the retrieval system and can be swapped or tuned independently.
+
+Pagination, feed caching with TTL, and handling new posts after a user loads their feed (so you don't miss content) are additional operational concerns that come up in a complete design.
+
+---
+
 ## How to Approach This in an Interview
 
 News feed is about one core trade-off: **fan-out on write vs fan-out on read**. Everything else in the design flows from this decision. Interviewers expect you to explain both clearly, then justify which you'd choose and when you'd use the hybrid. The celebrity problem is the key stress test.

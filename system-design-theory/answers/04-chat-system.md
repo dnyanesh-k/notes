@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A chat system is a real-time messaging platform that allows users to send and receive messages instantly, either one-on-one or in groups. WhatsApp, Slack, Telegram, and Facebook Messenger are all examples. The defining characteristic of a chat system is the real-time, bidirectional communication requirement — messages must appear on the recipient's screen within milliseconds of being sent, even if the sender and receiver are in different parts of the world.
+
+The fundamental challenge is connection management. Unlike a typical HTTP request-response model where a client asks and the server responds once, a chat system needs a persistent connection so the server can push messages to the client at any time. This is typically solved using WebSockets, which maintain an open TCP connection, allowing both the server and client to send data to each other without waiting for a request.
+
+At scale, maintaining millions of simultaneous WebSocket connections across multiple servers introduces a routing problem. If user A is connected to Server 1 and user B is connected to Server 2, Server 1 must know how to deliver B's message to A's server. This is typically solved with a pub/sub layer like Redis or a message queue that broadcasts to the correct server.
+
+Message storage is another core concern. Chat history must be persisted so users can scroll back and see old messages, access them from a new device, or retrieve them after being offline. This puts heavy write pressure on the database, as every message from every user must be stored durably. Column-family databases like Apache Cassandra are commonly used for this because they are optimized for high-throughput sequential writes.
+
+Additional features commonly asked about include message delivery receipts (sent, delivered, read), online/offline status, group chats, media file attachments, and end-to-end encryption.
+
+---
+
 ## How to Approach This in an Interview
 
 Chat is one of the hardest system design problems because it combines real-time delivery (WebSockets), massive write throughput (messages), distributed state (which server holds which connection), and data consistency (message ordering). Focus on these four challenges — the interviewer expects depth on all of them.

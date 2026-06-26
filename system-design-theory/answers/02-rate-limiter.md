@@ -2,6 +2,18 @@
 
 ---
 
+## Introduction
+
+A rate limiter controls how many requests a user, client, or service can make to a system within a defined time window. When the number of requests exceeds the allowed threshold, the extra requests are either rejected with an error (HTTP 429 Too Many Requests), delayed, or deprioritized. It is a foundational component in any large-scale distributed system.
+
+The primary purpose of rate limiting is to protect system resources from overload. Without it, a single misconfigured client, a bot, or a malicious actor can exhaust your servers and degrade service for every other user. It also prevents cost overruns when your backend calls paid third-party APIs on a per-request basis — a runaway client can generate an unexpected bill overnight.
+
+Rate limiters are applied at multiple levels depending on the use case: per user, per IP address, per API key, or per service-to-service call. Twitter limits read requests to 300 per 3 hours per token. GitHub allows 5000 API calls per hour per authenticated user. These limits ensure fair usage across all clients and protect the platform's reliability guarantees.
+
+The real challenge in rate limiting is not choosing an algorithm — it is making the limiter work correctly across a fleet of distributed servers. When 10 servers all receive requests from the same user simultaneously, they must agree on a shared count without race conditions. This requires a centralized store like Redis, which introduces latency tradeoffs. Common algorithms include Fixed Window Counter, Sliding Window Log, Sliding Window Counter, Token Bucket, and Leaky Bucket — each with different accuracy and performance characteristics.
+
+---
+
 ## How to Approach This in an Interview
 
 Rate limiter is a design interview that tests whether you understand distributed systems consistency under concurrency. The interesting part isn't the algorithm — it's how you make it work correctly when 10 servers are checking limits simultaneously.

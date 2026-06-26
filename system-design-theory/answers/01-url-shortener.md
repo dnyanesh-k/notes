@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A URL shortener is a service that takes a long URL and converts it into a short, unique alias that redirects to the original. When a user visits the short URL, the system looks up the original URL and redirects them instantly. Services like Bitly, TinyURL, and internal company link shorteners are all built on this pattern.
+
+The core purpose is usability and shareability. Long URLs break in emails, exceed character limits on social media, and are difficult to remember or type. A short URL like `bit.ly/abc123` solves all of these. At scale, this service handles hundreds of millions of redirects per day, making read performance the most critical requirement.
+
+The interesting design challenge is generating unique short codes. The system must produce short, collision-free, URL-safe identifiers at high throughput across multiple servers without coordinating through a single bottleneck. Approaches include hashing with collision handling, base62 encoding of auto-incremented IDs, or pre-generating and pooling IDs.
+
+The second challenge is redirection speed. Since every short URL hit is a read operation, the system must serve it in milliseconds. This is typically solved by caching the mapping in an in-memory store like Redis so the database is rarely touched for popular URLs.
+
+Optional but commonly asked features include expiry (links that stop working after a date), analytics (click counts, geolocation, device type), and custom aliases (where users choose their own slug instead of a generated one). Each of these adds meaningful complexity to the base design.
+
+---
+
 ## How to Approach This in an Interview
 
 Before drawing anything, always ask clarifying questions. This shows you don't jump to solutions before understanding the problem — which is exactly what senior engineers do.

@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A notification system is responsible for delivering messages to users across multiple channels — push notifications on mobile, emails, SMS, and in-app alerts. It is a backend infrastructure component that sits between the event-producing services and the user-facing delivery channels. Almost every modern application — social media, e-commerce, banking, SaaS — relies on a notification system to communicate with its users.
+
+The core flow is straightforward: something happens in the system (a new message, a payment, a friend request), and the notification service is triggered to inform the relevant user. But at scale, this simple flow becomes complex. Millions of events can fire simultaneously, and each one may need to be delivered to thousands of users across different devices and time zones.
+
+The primary challenges are reliability and scale. Notifications must be delivered at least once — a missed payment alert or a failed OTP delivery is unacceptable. At the same time, the system must avoid duplicate notifications, which are annoying to users and can undermine trust. This requires careful use of message queues, idempotency keys, and delivery tracking.
+
+Delivery channels each have their own complexity. Push notifications go through third-party providers like APNs (Apple) and FCM (Google), which have their own rate limits and delivery guarantees. Emails require handling bounces, unsubscribes, and spam scoring. SMS is expensive and has strict character limits. A well-designed notification system abstracts these channels behind a unified interface so the rest of the application does not need to know which channel is being used.
+
+Additional considerations include user preferences (opt-in/opt-out per channel), notification templates, prioritization (critical alerts vs promotional), and observability to track delivery success and failure rates.
+
+---
+
 ## How to Approach This in an Interview
 
 Notification systems look simple but have a surprising number of failure modes. The interesting parts are: fan-out at scale (5M users need the same message), third-party provider failures (FCM goes down), and deduplication (same notification sent twice because of a retry). Know these deeply.
@@ -602,17 +616,3 @@ POST /v1/notifications
 
 Rendering happens in the Notification API before Kafka publishing — the Kafka message contains the final rendered content, not the template. Workers are kept simple: they receive ready-to-send content and call the provider.
 
-**Q: How would you implement notification center (the bell icon showing last 30 notifications)?**
-
-This is a separate read path — not push. It's a DB query:
-
-```sql
-SELECT n.type, n.content, n.created_at, n.status
-FROM notifications n
-WHERE n.user_id = 12345
-  AND n.channel = 'in_app'
-ORDER BY n.created_at DESC
-LIMIT 30
-```
-
-The user opens the app → fetches this list → sees 30 recent notifications. No push involved. Mark all as `seen` when the user opens the notification center. This in-app channel is a different row in the notifications table with `channel='in_app'`. The fan-out for in-app is just a DB insert, not a third-party API call.

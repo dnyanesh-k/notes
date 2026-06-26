@@ -4,6 +4,20 @@
 
 ---
 
+## Introduction
+
+An AI agent is a system where a large language model does not just answer questions — it takes actions. Given a goal, the agent reasons about what steps to take, calls tools to gather information or perform operations, observes the results, and continues reasoning until the task is complete. This is fundamentally different from a chatbot: a chatbot responds, an agent acts.
+
+The agent loop follows a pattern called **ReAct** (Reason + Act). At each step, the model receives the current state — the original goal, the history of what has been done, and the latest observations — and decides either to call a tool or to return a final answer. A tool could be a code executor, a database query, a web search, a file reader, an API call, or anything else the system exposes to the agent. The loop continues until the model decides it has enough information to respond.
+
+**Model Context Protocol (MCP)** is a standardized interface for connecting LLMs to tools and data sources. Instead of every agent integration being custom-built, MCP defines a common protocol so any MCP-compatible tool can be plugged into any MCP-compatible agent without custom glue code. This dramatically simplifies building multi-tool agents, enables tool reuse across different agents, and allows safe, auditable tool access with defined schemas and permissions.
+
+The hardest design problems in AI agents are safety and reliability. An autonomous agent can call destructive tools — deleting records, sending emails, executing code. Without guardrails, a single misunderstood instruction can cause irreversible damage. Production systems implement role-based tool access (an agent handling read-only queries should not have access to write tools), require confirmation for destructive actions, sandbox code execution, and maintain complete audit logs of every tool call made.
+
+Session management, context window pressure as the conversation grows, and graceful degradation when a tool fails or times out are all important production concerns.
+
+---
+
 ## How to Approach This in an Interview
 
 AI agents go beyond chatbots: they take actions, use tools, and loop until a task is complete. The key is explaining: (1) the ReAct loop (think → act → observe → repeat), (2) why MCP is a better architecture than custom tool integration, and (3) the safety controls that prevent autonomous agents from doing dangerous things. You built ARIA — lead with concrete examples.

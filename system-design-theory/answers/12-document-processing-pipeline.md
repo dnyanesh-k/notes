@@ -2,6 +2,20 @@
 
 ---
 
+## Introduction
+
+A document processing pipeline is a system that takes raw input files — PDFs, Word documents, scanned images, HTML pages, spreadsheets — and transforms them into structured, searchable, and usable data. This is the foundational data preparation step that powers search engines, knowledge bases, RAG systems, compliance tools, and any application that needs to work with unstructured content at scale.
+
+The challenge is that documents are heterogeneous. A PDF might be a scanned image with no machine-readable text, requiring OCR before anything else can happen. An HTML page is full of boilerplate navigation, ads, and menus that must be stripped before the actual content can be extracted. A contract PDF has tables, headers, and footnotes that must be parsed into structured sections rather than treated as a wall of text. Each document type requires different handling.
+
+The pipeline is typically composed of discrete stages: **ingestion** (accepting files via upload, object storage events, or crawling), **parsing** (extracting raw text and structure), **cleaning** (removing boilerplate, fixing encoding issues), **chunking** (splitting text into semantically meaningful segments), **enrichment** (adding metadata, entity extraction, classification), and **indexing** (storing the output in a search index or vector database for downstream retrieval).
+
+Reliability and idempotency are critical requirements. Documents can be large, processing can be slow, and failures happen partway through. The pipeline must be able to resume from where it failed rather than reprocessing from scratch. Each stage is typically implemented as an independent worker reading from a queue, so stages can be scaled, retried, and monitored independently.
+
+At scale, this pipeline must handle thousands of documents per day, with different priorities (a newly uploaded contract needs to be searchable within minutes, while a historical batch migration can run overnight), and must maintain a processing audit trail for compliance.
+
+---
+
 ## How to Approach This in an Interview
 
 Document processing combines computer vision (OCR), NLP (extraction, classification), and distributed pipeline design. The interesting architectural challenge is the state machine: a document moves through stages, each stage can fail independently, and you need visibility into exactly where it is. Start with the pipeline stages and the state machine — that's what differentiates a solid answer.

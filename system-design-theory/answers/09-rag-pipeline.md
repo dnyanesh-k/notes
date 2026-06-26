@@ -4,6 +4,18 @@
 
 ---
 
+## Introduction
+
+A Retrieval-Augmented Generation (RAG) pipeline is an architecture that makes a large language model answer questions using a specific set of documents rather than relying solely on what it learned during training. Instead of asking an LLM a question directly, the system first retrieves the most relevant documents from a knowledge base, injects them into the prompt as context, and then asks the LLM to generate an answer grounded in that retrieved material.
+
+The problem RAG solves is fundamental to deploying LLMs in enterprise settings. LLMs have a training cutoff — they do not know about events or documents created after that date. More importantly, they have no access to private, internal knowledge: a company's runbooks, tickets, documentation, or codebase. RAG bridges this gap by giving the LLM dynamic access to curated, up-to-date, and domain-specific information at query time.
+
+The pipeline has two distinct phases. The **ingestion pipeline** runs offline: raw documents are loaded, split into smaller chunks, converted into vector embeddings using an embedding model, and stored in a vector database. This is a one-time or periodic process. The **query pipeline** runs in real time: when a user asks a question, it is also converted into an embedding, the vector database is searched for the most semantically similar chunks, and those chunks are assembled into a prompt that the LLM uses to generate a response.
+
+The hard problems in production RAG are not the retrieval itself — they are the quality of what you retrieve. Chunking strategy matters enormously: chunks that are too large lose precision, too small lose context. Embedding model choice affects whether similar concepts actually map to similar vectors. Re-ranking retrieved chunks before passing them to the LLM can dramatically improve answer quality. Evaluation — measuring whether the system retrieves the right documents and generates correct, grounded answers — is what separates a working demo from a production system.
+
+---
+
 ## How to Approach This in an Interview
 
 RAG (Retrieval-Augmented Generation) is the architecture of every enterprise AI product right now. The question tests whether you understand: why RAG exists (LLMs hallucinate without grounding), the two-pipeline structure (ingestion vs query), and the production concerns that separate a demo from a real system (evaluation, caching, chunking quality, multi-tenancy). If you built ARIA, you've lived all of this — lead with that.
