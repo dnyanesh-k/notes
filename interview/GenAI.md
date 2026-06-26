@@ -1011,3 +1011,112 @@ On Data Engineering & Automation (MLOps)
 
 10. When working with enterprise-grade knowledge-driven AI assistants, how do you balance context compression against accuracy? If you compress user context too aggressively to save on API costs, how do you verify you aren't losing vital information?
 
+---
+
+## ARIA — Production Deep Dive Q&A
+
+> These questions will come up if an interviewer reads your resume carefully and asks you to go deep on the enterprise AI assistant you built at CitiusTech. Read these until you can answer every one out loud without notes.
+
+---
+
+### What exactly is ARIA and what can it do?
+
+ARIA is an enterprise AI assistant built for healthcare operations at CitiusTech. It is not a chatbot — it is a tool-calling agent that can autonomously investigate and resolve production issues across the engineering stack.
+
+**What ARIA can access and do:**
+
+| System | What ARIA can do |
+|--------|-----------------|
+| Jira | Read tickets, search issues, post comments, transition status |
+| GitHub | Read source code, inspect PRs, view file history, check CI status |
+| Grafana / Loki | Query logs by time range and label, fetch error traces from production services |
+| AWS (S3, Athena, Redshift) | Run SQL queries, inspect S3 paths, validate data in the data lake |
+| Kubernetes / Argo CD | Read pod status, describe deployments, check rollout history (read-only in prod) |
+| Confluence | Read internal documentation pages |
+| Slack | Send messages, read channel history via sub-agent |
+
+The typical workflow: an engineer pastes a Jira bug ticket into ARIA. ARIA searches its knowledge base to understand which system and playbook applies, then autonomously queries Grafana logs for the error, reads the relevant source code on GitHub, identifies root cause, and either posts a draft fix as a Jira comment or raises a PR — all without the engineer doing any of those steps manually.
+
+**What ARIA cannot do without explicit confirmation:**
+- Write to S3 (hard gate — shows exact command and waits for "yes" before executing)
+- Delete anything (always blocked, asks first)
+- Merge or push to main branches
+
+---
+
+### What is the `search_kb` gate and why is it mandatory?
+
+Every ARIA response starts with a call to `search_kb` — a semantic search tool over an internal knowledge base of operational runbooks, playbooks, system architecture cards, and integration guides. This is enforced at the system prompt level as a hard rule: no other tool can fire before `search_kb` returns.
+
+**Why this matters:**
+
+The healthcare data platform has dozens of connectors, customer-specific configurations, and internal naming conventions that the LLM has no training data for. Without this gate, the agent would answer from general knowledge — which is confidently wrong for internal systems. For example, a question about "the MEDECON pipeline" means nothing to GPT-4o from training, but the KB card for that customer contains the exact S3 paths, table names, and known failure modes.
+
+**How it works:**
+1. User sends a message (a ticket, an error, a question)
+2. ARIA extracts 2–5 keyword phrases from the input — what the user wants, which systems are involved, any named entities (customer names, connector names, error strings)
+3. `search_kb` embeds those phrases using MiniLM (FastEmbed), runs cosine similarity against a pre-built index of all KB cards, and returns the top matches ranked by relevance
+4. ARIA reads the matched cards in full before calling any other tool
+5. Only after reading the cards does it proceed to query logs, GitHub, Jira, etc.
+
+**The result:** every tool call is grounded in org-specific knowledge. The agent doesn't invent S3 paths or table names — it reads them from the card first.
+
+---
+
+### What is session-aware deduplication and why did you build it?
+
+When ARIA runs multi-step investigations — especially when it spawns sub-agents for parallel tasks — the same KB cards can be fetched repeatedly. An orchestrator agent searches for "MEDECON pipeline" and loads that card. It spawns a sub-agent to query Loki logs. That sub-agent also calls `search_kb` with similar phrases and loads the same card again. In a long session this happens 3–5 times, wasting tokens and inflating cost.
+
+**The fix — session-aware deduplication:**
+
+The `search_kb` MCP server maintains a set of already-returned card IDs scoped to the parent process PID (not globally — concurrent ARIA sessions must not share state). When a card has already been returned in this session, it is suppressed from future `search_kb` results. The agent only receives cards it hasn't seen yet.
+
+A reset signal file (`/tmp/aria-brain-mcp-{pid}.reset`) allows the session to be cleared when needed — for example, when the user starts a completely new investigation topic in the same terminal session.
+
+**Why PID-scoped and not session-ID-scoped:** ARIA runs as a Claude Code process. The PID is the only stable identifier available at the MCP server level without adding session management infrastructure. It is simple, reliable, and requires no database.
+
+---
+
+### How does role-based authorization work per tool call?
+
+ARIA serves engineers of different seniority and clearance levels. A junior engineer should not be able to use ARIA to trigger AWS Athena queries or Kubernetes commands even if they know the right prompt. Guardrails exist at two levels:
+
+**Level 1 — Persona system prompt:**
+Each user type (SRE, data engineer, read-only analyst) gets a persona injected into the system prompt that defines which tools are permitted and at what access level. For example, a read-only analyst persona explicitly states: "You may NOT call any AWS CLI write commands. You may NOT create or modify Jira tickets. You may only read."
+
+**Level 2 — Pre-tool authorization hooks (fail-closed):**
+Before ARIA executes any tool call, it checks the tool name against the active persona's allowed-tools list. If the tool is not on the list, execution is blocked and the user gets an explanation. Fail-closed means: when in doubt, block. The system does not try to guess intent or make exceptions. This is critical in a clinical/healthcare environment where a wrong S3 write or an unintended schema change can have downstream effects on patient data pipelines.
+
+**Why fail-closed specifically:** In a permissive (fail-open) system, ambiguous cases pass through. In clinical data operations, an ambiguous tool call touching PHI-adjacent data is not acceptable. The cost of a false positive (blocking a legitimate action) is low — the engineer re-prompts or escalates. The cost of a false negative (executing an unauthorized action) could be a compliance violation.
+
+---
+
+### How does the KB routing index work? How do you keep it current?
+
+The knowledge base is a collection of markdown files — each file is a "card" describing a system, playbook, customer integration, or known failure pattern. New cards are added as the team documents new systems or post-mortems.
+
+**The routing index:**
+A build script reads all cards, extracts trigger phrases and metadata from each card's header, embeds those phrases using FastEmbed (MiniLM), and saves the resulting index as a JSON file. The MCP server loads this index at startup.
+
+**Hot-reload on change:**
+In local/development mode (`ARIA_INDEX_REBUILD=true`), the server watches `routing.md` (the master routing file that lists all cards and their trigger phrases) for changes. When it detects a change, it rebuilds the index automatically. Engineers can add a new card and immediately test it — no server restart needed.
+
+In production (Docker/cloud, `ARIA_INDEX_REBUILD=false`), the index is baked into the container image at build time. Updating the KB means rebuilding and redeploying the container. This is intentional — it gives a versioned, auditable record of what knowledge the agent had at any point in time.
+
+**Why local index and not a vector database:**
+The KB is small — a few hundred cards. A full vector database (Pinecone, Weaviate) adds operational complexity, cost, and a network round trip. A local JSON index loaded into memory at startup is faster, simpler, and has zero additional infrastructure. If the KB grew to tens of thousands of cards, the migration path to a proper vector store would be straightforward — same embedding model, same similarity logic, just a different backend.
+
+---
+
+### How do you handle a case where `search_kb` finds no relevant card?
+
+This happens when a user asks about a system or customer that hasn't been documented yet. The agent is designed not to silently fall back to general knowledge in these cases — that would defeat the purpose of the grounding layer.
+
+**What happens:**
+1. `search_kb` returns no matches or only low-confidence matches
+2. ARIA calls `search_kb` again with rephrased queries (different keyword combinations, broader terms, symptom-based rather than name-based)
+3. If two distinct search attempts fail, ARIA marks its response with `[ASSUMPTION: ...]` to explicitly flag that what follows is from general knowledge, not internal documentation
+4. The user sees this marker and knows to verify before acting
+
+**Why this matters for production:** The `[ASSUMPTION]` marker is not cosmetic — it is a signal to the engineer that this response has not been grounded in org-specific context. In a healthcare pipeline environment where the wrong table name or S3 path causes a data incident, that distinction is meaningful.
+

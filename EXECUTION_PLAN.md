@@ -23,28 +23,10 @@
 
 ## What Is Genuinely Pending (Do These First)
 
-### 1. Update Resume (URGENT — blocks all applications)
-Without this, you cannot apply. Must do before Day 1 applications.
+### 1. Update Resume ✅ DONE
+Resume updated — VidyaTrack (Institute ERP), ARIA bullets (3 bullets), pgvector removed.
 
-**Changes needed:**
-- Add VidyaTrack as a project:
-  ```
-  VidyaTrack — School ERP SaaS (Solo, Production)
-  • Built end-to-end: FastAPI backend, Next.js frontend, PostgreSQL, AWS EC2
-  • Multi-tenant architecture with JWT-based RBAC and 4-layer data isolation
-  • Features: fee management with partial payments, attendance, parent QR portal,
-    Google Drive integration, platform admin dashboard
-  • Deployed and used daily by real institutes (59+ students actively tracked)
-  ```
-- Add ARIA bullet points from `interview/resume-bullets.md`
-- Reframe coaching institute gap (2020–2024):
-  ```
-  Ran a coaching institute in Maharashtra (2020–2024)
-  Teaching Math & Science to 9th–10th grade students.
-  This experience directly inspired VidyaTrack — identified the manual
-  pain of managing fees, attendance, and parent communication.
-  ```
-- Update CitiusTech duration to correctly reflect ~20 months
+**Gap 2020–2024:** keep silent unless directly asked. If asked, say: *"I ran a coaching institute — that experience is actually what led me to build VidyaTrack."* One line, move on.
 
 ### 2. Update LinkedIn
 - Headline: `AI Engineer | FastAPI · RAG · LLM Orchestration · VidyaTrack`
