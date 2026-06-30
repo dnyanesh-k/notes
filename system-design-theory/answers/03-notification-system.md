@@ -10,7 +10,7 @@ The core flow is straightforward: something happens in the system (a new message
 
 The primary challenges are reliability and scale. Notifications must be delivered at least once — a missed payment alert or a failed OTP delivery is unacceptable. At the same time, the system must avoid duplicate notifications, which are annoying to users and can undermine trust. This requires careful use of message queues, idempotency keys, and delivery tracking.
 
-Delivery channels each have their own complexity. Push notifications go through third-party providers like APNs (Apple) and FCM (Google), which have their own rate limits and delivery guarantees. Emails require handling bounces, unsubscribes, and spam scoring. SMS is expensive and has strict character limits. A well-designed notification system abstracts these channels behind a unified interface so the rest of the application does not need to know which channel is being used.
+Delivery channels each have their own complexity. Push notifications go through third-party providers like APNs (Apple-Apple Push Notification) and FCM (Google-Firebase Cloud Messaging), which have their own rate limits and delivery guarantees. Emails require handling bounces, unsubscribes, and spam scoring. SMS is expensive and has strict character limits. A well-designed notification system abstracts these channels behind a unified interface so the rest of the application does not need to know which channel is being used.
 
 Additional considerations include user preferences (opt-in/opt-out per channel), notification templates, prioritization (critical alerts vs promotional), and observability to track delivery success and failure rates.
 

@@ -297,6 +297,90 @@ When you INSERT a row, Cassandra:
 
 Periodically, the MemTable is flushed to disk as an SSTable (Sorted String Table). This is why Cassandra writes are so fast — they're always sequential appends, never random overwrites.
 
+### The Lifecycle of a Cassandra Write
+
+Cassandra handles massive write volumes because its write path is lock-free, append-only, and sequentially driven. It avoids the costly in-place disk modifications that slow down relational databases. [1, 2, 3, 4, 5] 
+Here is exactly what happens when a write request hits a Cassandra cluster, moving from basic routing to advanced hardware-level execution.
+
+------------------------------
+#### Step 1: The Coordinator and Routing (Cluster Level)
+When your application sends a write request, it connects to any random node in the cluster. This node acts as the Coordinator for that specific request. [7, 8] 
+```
+                  [ Write Client ]
+                         │
+                         ▼ (Token Hashing)
+                 [ Coordinator Node ]
+                 ╱       │        ╲
+                ▼        ▼         ▼
+          [Node A]   [Node B]   [Node C]  <── (Replicas)
+```
+
+   1. Token Hashing: The Coordinator takes the Partition Key of your data and runs it through a hashing function (usually Murmur3Partitioner). This converts the key into a 64-bit integer token (between -2⁶³ and 2⁶³-1). [9, 10, 11, 12] 
+   2. Locating Replicas: Cassandra uses a token ring layout. The coordinator checks which nodes are responsible for that token range. If your replication factor is 3, it identifies the 3 replica nodes that must store this data. [13, 14, 15, 16, 17] 
+   3. Concurrent Forwarding: The coordinator fires the write request to all replica nodes simultaneously. It does not wait for all of them to finish; it only waits until the configured Consistency Level (e.g., LOCAL_QUORUM, ONE) is met before telling the client the write was successful. [18, 19, 20, 21, 22] 
+
+------------------------------
+#### Step 2: The Node-Level Write Path (Inside a Single Node)
+Once a replica node receives a write request, the write is executed in parallel across two distinct memory and disk components. A write is considered safe the moment it resides in these two places. [23] 
+
+```
+                    [ Incoming Write ]
+                       ╱          ╲
+                      ▼            ▼
+             [ CommitLog ]      [ Memtable ]
+             (On-Disk Append)   (In-Memory Sorted Tree)
+```
+
+- **1. The CommitLog (Durability)**
+To ensure the write survives a crash or power loss, the node immediately appends the raw mutation to the CommitLog on disk. [24] 
+
+* Why it is fast: This is a pure append-only operation. The disk arm never jumps around looking for a specific slot; it just writes sequentially to the end of the file. Sequential disk I/O is incredibly fast, rivaling memory speeds. [25, 26, 27, 28, 29] 
+
+- **2. The Memtable (Speed)**
+Simultaneously, the write is injected into the Memtable (Memory Table). [30, 31] 
+
+* Structure: The Memtable is an in-memory, sorted data structure (typically a Concurrent Skip List).
+* Sorting Mechanism: Unlike B+ trees that write to disk immediately, Cassandra sorts the data data in memory by partition key and clustering column as it arrives. [32, 33, 34, 35, 36] 
+
+Once the data is written to the CommitLog and the Memtable, the node releases its write lock and returns a success status to the coordinator. No disk seeks occurred, and no indexes were rebalanced. [37, 38, 39, 40, 41] 
+------------------------------
+#### Step 3: Flushing to SSTables (Advanced Deferment)
+Memtables cannot grow indefinitely. When a Memtable fills up (reaches a configured memory threshold) or the CommitLog approaches its size limit, the Memtable is marked as "read-only" and a new, empty Memtable is opened for incoming writes. [42, 43, 44] 
+A background thread then kicks off a Flush operation:
+
+[ Memtable (Memory) ] ──(Sequential Flush)──► [ SSTable (Disk) ]
+                                              ├─ Data.db (Raw Data)
+                                              ├─ Index.db (Byte Offsets)
+                                              └─ Filter.db (Bloom Filter)
+
+
+   1. SSTable Creation: The background thread writes the sorted contents of the Memtable sequentially onto the disk as an SSTable (Sorted String Table). [45, 46, 47, 48] 
+   2. Immutability: SSTables are 100% immutable. They are never modified, appended to, or updated. If you update a row, Cassandra simply writes a brand-new SSTable with the updated value and a newer timestamp. If you delete a row, Cassandra writes a marker called a Tombstone. [49, 50, 51, 52, 53] 
+   3. CommitLog Purge: Once the SSTable is safely written to disk, the old CommitLog segments corresponding to that Memtable are safely deleted, as the data is now durable on permanent storage. [54, 55] 
+
+------------------------------
+#### Step 4: Accompanying On-Disk Components
+Every time an SSTable is flushed to disk, Cassandra creates a few companion files alongside the raw data (Data.db) to ensure reads remain fast despite having data scattered across multiple files:
+
+* Bloom Filter (Filter.db): A highly compressed, probabilistic in-memory structure. Before checking an SSTable on disk during a read, Cassandra checks the Bloom Filter. It instantly tells the engine if a partition key definitely does not exist in that SSTable, preventing useless disk reads.
+* Partition Index (Index.db): A file mapping partition keys to their exact byte offsets inside the actual data file. [56, 57, 58, 59, 60] 
+
+------------------------------
+#### Step 5: Background Compaction (The Garbage Collector)
+Because Cassandra continuously dumps new SSTables to disk, a single row might have fragments scattered across 10 different SSTable files (e.g., the original insert, an update to column A, a tombstone for column B). [61] 
+To prevent reads from slowing down, a background process called Compaction continuously runs.
+
+[ SSTable 1 ] ──┐
+[ SSTable 2 ] ──┼─► [ Merge-Sort Process ] ─► [ New Consolidated SSTable ]
+[ SSTable 3 ] ──┘     (Keeps newest timestamps,
+                       drops overwritten data)
+
+
+   1. Merge-Sorting: Compaction selects a few SSTables and merges them into one single, consolidated SSTable. Because the files are already sorted, this is a highly efficient O(N) merge-sort operation. [62, 63, 64, 65, 66] 
+   2. Deduplication: During the merge, if the compaction process finds two versions of the exact same row, it compares their timestamps. It keeps the newest data and discards the old version. [67, 68] 
+   3. Tombstone Purging: If a tombstone has outlived its expiration window (gc_grace_seconds), compaction completely wipes the deleted data and the tombstone from disk, freeing up storage space. [69, 70, 71] 
+
+
 **Why not MySQL for 580K writes/sec?**
 
 MySQL's primary node handles writes with row-level locking and B-tree index updates. At 580K writes/sec, the B-tree index for the messages table would be continuously rebalanced — this is O(log n) per write. The index would become a bottleneck. You'd need to partition (shard) MySQL across hundreds of nodes and manage the routing — essentially reinventing Cassandra.
@@ -564,14 +648,14 @@ Single grey ✓ (sent to server):
 
 Double grey ✓✓ (delivered to B's device):
   B's Chat Server pushes message to B over WebSocket
-  B's client immediately sends back: { type: "delivered", message_id: 789 }
+  B's client immediately sends back: { status: "delivered", message_id: 789 }
   Routed back to A via Kafka
   A's UI updates to ✓✓
   Also: UPDATE messages SET status='delivered' in Cassandra
 
 Blue ✓✓ (read by B):
   B's app brings that conversation into foreground focus
-  B's client sends: { type: "read", conversation_id: X, up_to_message_id: 789 }
+  B's client sends: { status: "read", conversation_id: X, up_to_message_id: 789 }
   All messages up to 789 in that conversation are marked read
   Routed back to A
   A's UI updates to blue ✓✓
