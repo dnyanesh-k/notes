@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A news feed system is responsible for generating and displaying a personalized stream of content for each user — posts, updates, and activity from people or accounts they follow. Twitter's timeline, LinkedIn's feed, and Instagram's home screen are all news feed systems. The feed is typically sorted by recency, relevance, or a combination of both using a ranking algorithm.
@@ -59,7 +63,33 @@ News feed is about one core trade-off: **fan-out on write vs fan-out on read**. 
 
 ---
 
+## Functional Requirements
+
+- Users should be able to post content that appears in their followers' feeds
+- Users should be able to view a paginated, reverse-chronological feed of posts from accounts they follow
+- Users should be able to follow and unfollow other accounts
+
+> **How to say this in the interview:** *"I see three core things users need — post content that shows up in their followers' feeds, view a paginated reverse-chronological feed of posts from people they follow, and follow or unfollow accounts. Does that capture the core use cases?"* The feed system is where the interesting design is — framing it as "reverse-chronological" upfront lets the interviewer redirect to ranked or algorithmic feed if that's what they have in mind.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Feed read latency < 200ms**: feed load is the primary action — must feel instant
+- **Availability over Consistency (AP)**: a slightly stale feed is acceptable; unavailability is not
+- **Read-heavy scale (1000:1)**: 300M DAU, optimize the read path — not the write path
+- **Celebrity fan-out problem**: accounts with 50M followers need a different write strategy than regular users
+- **Eventual consistency window**: feed updates visible within a few seconds of a post being created
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 DAU: 300M
@@ -87,7 +117,44 @@ Feed cache per user:
 
 ---
 
+## Core Entities
+
+- **User** — identity + follower/following counts
+- **Post** — content + author_id + timestamp + media references
+- **Follow** — follower_id → followee_id relationship
+- **FeedEntry** — pre-computed feed item (post_id + user_id) for fan-out-on-write cache
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST:** Standard client-facing product with clear CRUD operations on well-defined resources — posts, follows, and the feed. REST maps directly to these entities with no special requirements. GraphQL is unnecessary because all clients need the same data shape. WebSocket is not needed because the feed is pull-based: the user refreshes or scrolls to load more, not a real-time stream. Say: *"I'll use REST — this is a clean resource model with posts, follows, and the feed as the core resources. No GraphQL since all clients need the same shape, and no WebSocket since feed loading is a pull operation, not a push."*
+
+```
+POST /v1/posts
+body: { "content": string, "media_ids"?: string[] }
+→ 201: { "post_id": string, "created_at": timestamp }
+
+GET /v1/feed?cursor=<cursor>&limit=20
+→ 200: { "posts": Post[], "next_cursor": string }
+
+POST /v1/follows
+body: { "followee_id": string }
+→ 201: { "follow_id": string }
+
+DELETE /v1/follows/{followee_id}
+→ 204 No Content
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌──────────┐                                                         ┌──────────┐
@@ -480,6 +547,9 @@ This is how every major feed (Twitter, Instagram, LinkedIn) implements infinite 
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 3B DAU, 170,000 reads/sec, 10,000 posts/sec, 578,500 fan-out writes/sec.
 

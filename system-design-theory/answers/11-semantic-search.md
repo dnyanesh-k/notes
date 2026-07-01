@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 Semantic search is a search system that finds results based on the meaning of a query rather than matching exact keywords. Traditional keyword search looks for the literal words in the query — if a user searches "car repair," only documents containing those exact words rank highly. Semantic search understands that "auto maintenance," "vehicle servicing," and "fixing my Toyota" all express the same intent and returns relevant results for all of them.
@@ -60,7 +64,33 @@ Semantic search is RAG without the LLM generation step — you're returning rank
 
 ---
 
+## Functional Requirements
+
+- Users should be able to search enterprise documents using natural language queries and receive ranked results
+- The system should support hybrid search combining semantic (dense embedding) and keyword (BM25 sparse) signals
+- Users should be able to filter results by metadata: date range, author, category, and document type
+
+> **How to say this in the interview:** *"I see three core things users need — search enterprise documents using natural language and get ranked results, have hybrid search that combines semantic understanding with keyword matching so neither mode loses out, and filter results by metadata like date, author, or document type. Does that capture it?"* Stating hybrid search as a first-class requirement is a strong signal — it immediately shows you know the difference between pure vector search and production-grade retrieval.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Search latency < 200ms**: enterprise search must feel as fast as Google — latency is the primary UX metric
+- **Multi-tenant pre-filtering (hard requirement)**: tenant isolation enforced before ANN search, not after — correctness over speed
+- **Scale**: 10M documents, 50M chunks, 1,000 queries/sec
+- **Index freshness**: newly added documents searchable within 5 minutes of upload
+- **Relevance over recall**: return fewer, more accurate results — noisy results destroy user trust
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 10M documents × 5 chunks/doc average = 50M vectors
@@ -85,7 +115,45 @@ Elasticsearch for 10M documents:
 
 ---
 
+## Core Entities
+
+- **Document** — source file + metadata (tenant_id, author, date, category, type)
+- **Chunk** — text segment + dense embedding vector + BM25 index entry + document reference
+- **SearchResult** — ranked list of chunks with hybrid scores + document metadata
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST:** The search operation has a structured query body — natural language text plus filters like date range, author, and hybrid weight. This does not fit cleanly into a GET query string, so a POST with a request body is the right choice. Document ingestion and deletion are standard resource operations on a Document resource. Say: *"I'll use REST. The search query is a POST rather than a GET because the query body is structured — it has filters, hybrid weight, and pagination parameters that would make a GET query string unwieldy. The document management operations are standard CRUD on a Document resource."*
+
+```
+POST /v1/search
+body: {
+  "query": string,
+  "filters"?: { "date_range": object, "author": string, "category": string },
+  "limit"?: int,
+  "hybrid_weight"?: float   ← 0.0 = pure BM25, 1.0 = pure semantic
+}
+→ 200: { "results": [{ "chunk_id": string, "text": string, "score": float, "document": DocumentMeta }], "total": int }
+
+POST /v1/documents
+body: multipart/form-data { file, metadata: object }
+→ 202 Accepted: { "document_id": string }
+
+DELETE /v1/documents/{document_id}
+→ 202 Accepted  (async removal from index)
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -467,6 +535,9 @@ def highlight_query_terms(text: str, query: str) -> str:
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 10,000 queries/sec, 100M documents.
 

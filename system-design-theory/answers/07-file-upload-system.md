@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A file upload system allows users to store, retrieve, and manage files — images, videos, documents, backups — reliably in the cloud. Amazon S3, Google Cloud Storage, and Dropbox are the most well-known examples. The system must handle files ranging from a few kilobytes to several gigabytes, serve them to potentially millions of concurrent users, and guarantee that once a file is uploaded it is never lost.
@@ -63,7 +67,33 @@ The key insight in file upload design is the **pre-signed URL pattern**: for any
 
 ---
 
+## Functional Requirements
+
+- Users should be able to upload files of any type up to 5GB and receive a stable access URL
+- Users should be able to download files via direct URL (public) or time-limited signed URL (private)
+- Users should be able to delete files they own
+
+> **How to say this in the interview:** *"I see three core things users need — upload files up to 5GB and receive a stable access URL, download them either directly if public or via a time-limited signed URL if private, and delete files they own. Does that capture it?"* The signed URL detail is worth stating explicitly upfront because it implies a meaningful security design choice — better to get alignment on it now than after you've built the architecture.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **High durability (99.999999%)**: files must not be lost — 3x replication across availability zones
+- **Resumable uploads**: large file uploads must survive network interruptions without restarting from scratch
+- **Download latency < 100ms TTFB**: CDN-served for public files; global edge delivery
+- **Scale**: 10M uploads/day ≈ 115/sec; downloads are 10x uploads — CDN absorbs the majority
+- **Availability over Consistency**: metadata staleness is acceptable; upload/download path must always be available
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Uploads: 10M/day = 115/sec
@@ -87,7 +117,50 @@ Metadata DB:
 
 ---
 
+## Core Entities
+
+- **User** — identity + storage quota
+- **File** — metadata: name, size, MIME type, visibility (public/private), owner, checksum
+- **Chunk** — part of an in-progress multipart upload (ephemeral until completed)
+- **SignedURL** — pre-signed access token with expiry for private file downloads
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST (with a key variation for large files):** REST handles the metadata and control operations cleanly. The interesting design decision is for large file uploads — rather than streaming 5GB through our servers, the client receives pre-signed S3 URLs and uploads each part directly to S3. This bypasses our application servers entirely, which is both cheaper and faster. Say: *"I'll use REST for the API. The important design decision is that for large files, I won't route bytes through our servers — the client gets pre-signed S3 URLs and uploads parts directly to S3. Our API is just the orchestration layer: initiate the upload, get the URLs, confirm completion. This keeps our servers out of the data path entirely."*
+
+```
+// Small files (< 100MB) — single upload
+POST /v1/files
+body: multipart/form-data { file, visibility: "public|private" }
+→ 201: { "file_id": string, "url": string }
+
+// Large files — multipart initiation
+POST /v1/uploads
+body: { "filename": string, "size": int, "total_parts": int, "visibility": string }
+→ 201: { "upload_id": string, "part_urls": string[] }   ← pre-signed S3 URL per part
+
+PUT /v1/uploads/{upload_id}/complete
+body: { "parts": [{ "part_number": int, "etag": string }] }
+→ 200: { "file_id": string, "url": string }
+
+GET /v1/files/{file_id}/signed-url?expires_in=900
+→ 200: { "signed_url": string, "expires_at": timestamp }
+
+DELETE /v1/files/{file_id}
+→ 204 No Content
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
                                               ┌─────────────────────────────┐
@@ -478,6 +551,9 @@ Client polls status or receives webhook when complete
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 115 uploads/sec → 1,150 uploads/sec, 11.5 GB/sec upload throughput.
 

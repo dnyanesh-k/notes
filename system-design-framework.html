@@ -211,7 +211,7 @@
 
 <div class="trigger-box">
   <div class="label">Mental Trigger — Say This Out Loud First</div>
-  <div class="flow">Clarify → Scope → HLD → LLD → Scale → Trade-offs</div>
+  <div class="flow">Requirements (FR+NFR+Entities) → API → HLD → Deep Dives (NFR-driven)</div>
 </div>
 
 <div class="steps">
@@ -234,13 +234,28 @@
         <div class="question">Are we building for <strong>read, write, or both</strong>? (read-heavy changes everything)</div>
       </div>
 
-      <div class="sub-label">Non-functional — constraints</div>
+      <div class="sub-label">Non-functional — qualities of the system, not features</div>
+      <div class="step-tip" style="margin-bottom:8px;color:#f87171">⚠ Always quantify. "The system should be fast" is meaningless to an interviewer. "Redirect latency under 50ms on the 10K RPS read path" shows you understand the system. Pick the top 3–5 from this checklist that are most relevant:</div>
       <div class="questions">
-        <div class="question"><strong>Scale:</strong> DAU? requests/sec? data stored?</div>
-        <div class="question"><strong>Latency:</strong> real-time (&lt;100ms), near-real-time (&lt;1s), or batch (minutes)?</div>
-        <div class="question"><strong>Availability:</strong> 99.9% (8hr downtime/yr) or 99.99% (52min/yr)?</div>
-        <div class="question"><strong>Consistency:</strong> strong (banking) or eventual (social feed) is acceptable?</div>
-        <div class="question"><strong>Geography:</strong> single region or global?</div>
+        <div class="question"><strong>CAP Theorem:</strong> Availability or consistency? (Partition tolerance is a given.) AP = stale data acceptable. CP = never stale, may be unavailable. Name your choice and say why.</div>
+        <div class="question"><strong>Environment Constraints:</strong> Mobile device (limited battery/bandwidth)? Streaming on 3G? On-device vs cloud inference? These constrain the design fundamentally.</div>
+        <div class="question"><strong>Scalability:</strong> Any unique scaling needs? Bursty traffic (holidays, live events)? What is the read vs write ratio — which needs to scale more?</div>
+        <div class="question"><strong>Latency:</strong> Which specific path must be fastest? What is the millisecond target? e.g. <em>"low latency search &lt;200ms"</em> — not just <em>"low latency."</em></div>
+        <div class="question"><strong>Durability:</strong> Can data be lost? Social feed = some loss OK. Banking / URL mappings = never acceptable. What is the RPO?</div>
+        <div class="question"><strong>Security:</strong> Data protection, access control, compliance (HIPAA, GDPR, SOC2)? Role-based permissions?</div>
+        <div class="question"><strong>Fault Tolerance:</strong> What happens when a component fails? Redundancy, failover, circuit breakers, recovery time?</div>
+        <div class="question"><strong>Compliance:</strong> Legal or regulatory requirements? Industry standards, data residency, audit trails?</div>
+      </div>
+      <div class="step-tip" style="margin-top:10px;color:#60a5fa">▶ Say: <em>"For non-functional requirements I'm thinking [NFR1 + specific number], [NFR2 + specific number], [NFR3 + specific number]. Any specific constraints I should factor in?"</em></div>
+
+      <div class="divider" style="margin:14px 0"></div>
+
+      <div class="sub-label">Core Entities — 2 minutes, before drawing anything</div>
+      <div class="step-tip" style="margin-bottom:8px">List 3–5 nouns only. Do NOT write full table schemas here. The interviewer knows User has email/name. Schema columns get added directly next to the database during HLD, not in a separate table upfront.</div>
+      <div class="questions">
+        <div class="question">Ask yourself: <strong>Who are the actors?</strong> (Users, Admins, Workers, Services — are any overlapping?)</div>
+        <div class="question">Ask yourself: <strong>What nouns are necessary to satisfy the FRs?</strong> Post a tweet → Tweet. Follow a user → Follow. Shorten a URL → ShortURL.</div>
+        <div class="question">Say: <em>"Before I draw, let me put the core entities on the board: [X, Y, Z with one-line roles]. I'll keep the schema light for now and add the relevant columns next to the database as we go through each endpoint."</em></div>
       </div>
     </div>
   </div>
@@ -387,9 +402,17 @@
       <div class="step-time">3–4 min</div>
     </div>
     <div class="step-body">
-      <div class="step-tip">This is where seniors separate from juniors. Don't just say "add more servers" — name exactly what breaks and why.</div>
+      <div class="step-tip">This is where seniors separate from juniors. Lead by going back to the NFRs you stated in Phase 1 — say <em>"Let me now address the non-functional requirements I identified."</em> Then for each NFR: state the problem it creates in the current design, then your solution. Pause after each one and let the interviewer probe. Do not monologue.</div>
 
-      <div class="sub-label">Work through the stack from top to bottom</div>
+      <div class="sub-label">Deep Dive framing — always lead with the NFR it addresses</div>
+      <div class="questions">
+        <div class="question"><strong>Latency NFR:</strong> "The current design hits the DB on every redirect. To get under 50ms I'd add a Redis cache in front — here's why and how..."</div>
+        <div class="question"><strong>Scale NFR:</strong> "At 10x the read replicas will saturate. I'd shard on [key] because..."</div>
+        <div class="question"><strong>Availability NFR:</strong> "If the primary DB goes down we'd lose availability. I'd use [replica failover / multi-AZ] to achieve the AP goal..."</div>
+        <div class="question"><strong>Durability NFR:</strong> "A URL mapping can never be lost. I'd use synchronous replication to at least 2 replicas before ACK..."</div>
+      </div>
+
+      <div class="sub-label">Stack-level breakdown (what to discuss per NFR)</div>
       <div class="questions">
         <div class="question"><strong>Client:</strong> CDN for static assets, edge caching for popular data</div>
         <div class="question"><strong>API tier:</strong> stateless services → horizontal scale behind load balancer</div>

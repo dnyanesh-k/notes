@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A job scheduler is a system that executes tasks at a specified time or on a recurring schedule, without requiring a human to trigger them manually. Sending a weekly email digest, running a nightly database cleanup, generating monthly invoices, or refreshing a cache every 5 minutes are all jobs that a scheduler manages. Cron is the simplest example, but production systems need distributed schedulers that can handle millions of jobs reliably across multiple servers.
@@ -60,7 +64,33 @@ Job scheduler looks deceptively simple ("just poll a table") but the interesting
 
 ---
 
+## Functional Requirements
+
+- Users should be able to schedule a job to run once at a specific time or on a recurring cron schedule
+- The system should execute jobs within 5 seconds of their scheduled time
+- Users should be able to view execution history and current status per job
+
+> **How to say this in the interview:** *"I see three core things here — schedule jobs to run once at a specific time or on a recurring cron schedule, execute them within 5 seconds of the scheduled time, and view execution history and current status for any job. Does that match your thinking?"* The "within 5 seconds" precision point is worth stating early because it rules out millisecond-precision approaches and immediately focuses the design on polling-based schedulers rather than real-time triggers.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **At-least-once execution**: a missed job is worse than a duplicate — all job handlers must be idempotent
+- **Schedule precision within 5 seconds**: not millisecond-accurate, but reliably near the target time
+- **Scale**: 1M jobs/day ≈ 12 jobs/sec; workers scale independently from the scheduler
+- **Durability**: scheduled jobs must survive scheduler restarts — persisted, not in-memory
+- **Scheduler HA**: single point of failure — must use leader election (e.g. ZooKeeper) or active-passive failover
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 1M jobs/day = ~12 jobs/sec
@@ -83,7 +113,45 @@ Job types:
 
 ---
 
+## Core Entities
+
+- **Job** — definition: name, handler, payload, schedule type (cron/one-time), cron expression, status
+- **JobRun** — execution instance: job_id + start_time + end_time + status + output + retry_count
+- **Worker** — stateless execution unit that polls for ready jobs from the dispatch queue
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST:** This is a control plane API used by other services to schedule and manage jobs — a clean CRUD pattern on a Job resource. REST provides simplicity and broad compatibility with any service that needs to call it. Status polling is also straightforward: GET the job run and check the status field. Say: *"I'll use REST — this is a control plane interface for creating and managing jobs. Other services call it to schedule work, which is a standard resource management pattern. Status polling fits naturally into REST: GET the run, check the status."*
+
+```
+POST /v1/jobs
+body: { "name": string, "handler": string, "payload": object, "schedule": "once|cron", "run_at"?: timestamp, "cron"?: string }
+→ 201: { "job_id": string, "next_run_at": timestamp }
+
+GET /v1/jobs/{job_id}
+→ 200: { "job": Job, "last_run": JobRun }
+
+GET /v1/jobs/{job_id}/runs?limit=20
+→ 200: { "runs": JobRun[] }
+
+POST /v1/jobs/{job_id}/trigger
+→ 202 Accepted: { "run_id": string }   ← manual trigger
+
+DELETE /v1/jobs/{job_id}
+→ 204 No Content  (cancels future runs)
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌───────────┐                                                    ┌──────────────┐
@@ -198,6 +266,10 @@ CREATE TABLE cron_jobs (
     INDEX idx_next_run (next_run_at, is_active)
 );
 ```
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
 
 ---
 
@@ -528,6 +600,9 @@ Execution history is preserved. You can query: "Show me all executions of the da
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 120 jobs/sec, 10.3M jobs/day.
 

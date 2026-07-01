@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 An ETL (Extract, Transform, Load) pipeline is a data engineering system that moves data from source systems into a destination — typically a data warehouse or analytics database — where it can be queried and analyzed. Extract means pulling raw data from sources like application databases, APIs, logs, or third-party services. Transform means cleaning, reshaping, and enriching that data into a consistent format. Load means writing the transformed data into the destination where analysts and systems can use it.
@@ -61,7 +65,33 @@ ETL is one of the most practical data engineering questions. Lead with the three
 
 ---
 
+## Functional Requirements
+
+- The system should incrementally extract data from operational DBs (CDC) and SaaS APIs (polling) and load it into the data warehouse within 1 hour
+- The system should validate data quality at each stage and log failures without stopping the pipeline
+- Operators should be able to monitor pipeline health, view failed records, and trigger manual re-runs per source
+
+> **How to say this in the interview:** *"I see three core capabilities here — incrementally extract data from operational databases and SaaS APIs and load it into the warehouse within one hour, validate data quality at each stage and log failures without stopping the pipeline, and give operators visibility into health, failures, and the ability to trigger manual re-runs. Does that match your thinking?"* The "without stopping the pipeline" clause is the key design constraint — confirm this is the expectation so you can design fault isolation from the start.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **1-hour data freshness SLA**: operational data available in the warehouse within 60 minutes of source write
+- **< 0.1% validation failure rate**: data quality is the primary output metric — high failures invalidate all downstream analytics
+- **Fault isolation**: one source failure must not block other sources from completing their runs
+- **Idempotent loads**: re-running any pipeline segment must not produce duplicate records in the warehouse
+- **Scale**: 500GB/day, 50M events/day ≈ 578 events/sec — Kafka-backed for decoupled, scalable throughput
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Volume: 500GB/day raw data
@@ -86,7 +116,65 @@ Redshift (analytics):
 
 ---
 
+## Core Entities
+
+- **Source** — connection config for each DB or SaaS API + extraction cursor (last extracted ID/timestamp)
+- **ExtractJob** — per-source extraction run + start_time + status + records_extracted
+- **DataRecord** — raw extracted row + source metadata + validation status + error message if failed
+- **LoadBatch** — set of validated records written to the warehouse in one idempotent transaction
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## Data Flow
+
+> **When to use this in the interview:** ETL is the clearest case for describing data flow before drawing the architecture. Say: *"Let me walk through what happens to a data record from the moment it changes in the source database to when it appears in the warehouse."* This sequence makes every box in the HLD obvious.
+
+**Incremental ETL cycle (source change → warehouse):**
+
+1. **Extract:** CDC connector detects a row change in the operational DB (via database transaction log / binlog)
+   — For SaaS APIs: poller calls the API using the last-synced cursor (timestamp or ID)
+2. Raw record published to Kafka topic per source
+3. **Validate:** Validation consumer reads from Kafka, applies schema and business rule checks
+   — Pass → forward to transformation topic
+   — Fail → write to dead-letter queue, log the error, continue pipeline
+4. **Transform:** Transform worker reads from the validated topic, applies normalization, type casting, enrichment
+5. Transformed record written to staging area (S3 Parquet or a staging DB table)
+6. **Load:** Batch loader reads from staging and performs an upsert into the Redshift warehouse using the record's primary key (idempotent — safe to re-run)
+7. Load cursor updated for next incremental extraction cycle
+
+---
+
+## API Design
+
+> **Why REST (internal operator interface):** This API is not customer-facing — it is used by data engineers and monitoring dashboards to trigger runs, inspect status, and view failures. REST gives simplicity and broad tooling compatibility: any dashboard, alerting system, or CLI can call it without a custom client. The actual data movement happens through the ETL pipeline itself (Kafka, batch jobs), not through API calls. Say: *"I'll use REST for the operator interface — triggering pipeline runs, checking status, viewing failures. This is an internal control plane, not a high-performance data path, so REST is the right fit. The data itself moves through Kafka and the pipeline workers, not through this API."*
+
+```
+GET /v1/pipelines
+→ 200: { "pipelines": [{ "source": string, "status": string, "last_run": timestamp, "records_today": int }] }
+
+POST /v1/pipelines/{source}/run
+body: { "mode": "incremental|full", "since"?: timestamp }
+→ 202 Accepted: { "run_id": string }
+
+GET /v1/runs/{run_id}
+→ 200: { "status": "running|complete|failed", "records_extracted": int, "validation_failures": int, "duration_ms": int }
+
+GET /v1/runs/{run_id}/failures?limit=50
+→ 200: { "failures": [{ "record": object, "error": string }] }
+
+POST /v1/runs/{run_id}/retry
+→ 202 Accepted: { "new_run_id": string }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -591,6 +679,9 @@ Strategy depends on severity:
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 5TB/day, 500M events/day.
 

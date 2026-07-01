@@ -4,6 +4,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A Retrieval-Augmented Generation (RAG) pipeline is an architecture that makes a large language model answer questions using a specific set of documents rather than relying solely on what it learned during training. Instead of asking an LLM a question directly, the system first retrieves the most relevant documents from a knowledge base, injects them into the prompt as context, and then asks the LLM to generate an answer grounded in that retrieved material.
@@ -61,7 +65,33 @@ RAG (Retrieval-Augmented Generation) is the architecture of every enterprise AI 
 
 ---
 
+## Functional Requirements
+
+- Users should be able to query the knowledge base in natural language and receive grounded answers with source citations
+- Operators should be able to ingest, update, and delete documents from the knowledge base
+- The system should enforce strict tenant isolation — one tenant's documents must never appear in another's results
+
+> **How to say this in the interview:** *"I see three core things here — query the knowledge base in natural language and get grounded answers with source citations, ingest and remove documents from the knowledge base, and enforce strict tenant isolation so one organization's documents can never surface in another's results. Does that capture it?"* The tenant isolation point is worth stating as a first-class requirement because it fundamentally changes the retrieval architecture — confirm scope before you design around it.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Query latency < 2 seconds end-to-end**: includes retrieval + LLM generation — must feel responsive
+- **Knowledge freshness**: document updates must be searchable within minutes of ingestion
+- **Multi-tenant isolation (hard requirement)**: pre-filter by tenant_id before ANN search — never post-filter
+- **Scale**: 1,000 queries/sec total (100 queries/sec × 10 tenants)
+- **Retrieval accuracy over raw speed**: a wrong answer is worse than a slow one — recall and precision matter most
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Ingestion:
@@ -90,7 +120,70 @@ Query latency budget (2 second SLA):
 
 ---
 
+## Core Entities
+
+- **Document** — raw source file + metadata (tenant_id, source, created_at, content type)
+- **Chunk** — text segment extracted from a document + embedding vector + document reference
+- **VectorIndex** — per-tenant ANN index over chunk embeddings (e.g. HNSW in Qdrant/Weaviate)
+- **QueryResult** — retrieved chunks + LLM-generated answer + source citations
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## Data Flow
+
+> **When to use this in the interview:** For pipeline-style systems, sketch the data flow as a numbered list before drawing boxes. Say: *"Let me walk through the sequence of operations before I draw the architecture."* This makes the HLD diagram much easier to follow because the interviewer already knows what each box is for.
+
+**Ingestion path (document → indexed chunks):**
+
+1. Client uploads document → API returns 202 Accepted with `document_id`
+2. Upload triggers a message onto the ingestion queue (Kafka)
+3. Document Processor pulls the message, fetches the raw file from object storage
+4. Parser splits the document into overlapping text chunks (e.g. 512 tokens, 50-token overlap)
+5. Embedding model converts each chunk into a dense vector
+6. Chunks + vectors written to the vector database, indexed under `tenant_id`
+7. Document status updated to "indexed" in the metadata store
+
+**Query path (question → grounded answer):**
+
+1. Client sends natural language query → API receives it
+2. Query embedded using the same embedding model as ingestion
+3. Vector database performs ANN search, pre-filtered by `tenant_id`
+4. Top-k chunks retrieved and ranked
+5. Chunks injected into the LLM prompt as context
+6. LLM generates a grounded answer
+7. Response + source chunk references returned to client
+
+---
+
+## API Design
+
+> **Why REST (sync query, async ingestion):** The query endpoint is synchronous — a user asks a question and waits for the answer. REST POST with a body works well for structured queries with filters. Document ingestion is different: processing a PDF takes seconds to minutes, so the API accepts the file, returns 202 Accepted immediately, and processes it asynchronously. Say: *"I'll use REST. The query is a POST with a structured body — it has filters and parameters that don't fit cleanly into a GET query string. Ingestion is async: the API accepts the document and returns 202 Accepted immediately. The client polls for status rather than waiting, because file processing can take several minutes."*
+
+```
+POST /v1/query
+body: { "query": string, "top_k"?: int, "filters"?: object }
+→ 200: { "answer": string, "sources": [{ "chunk_id": string, "text": string, "score": float }] }
+
+POST /v1/documents
+body: multipart/form-data { file, metadata: { source, tags } }
+→ 202 Accepted: { "document_id": string, "status": "processing" }
+
+GET /v1/documents/{document_id}/status
+→ 200: { "status": "processing|indexed|failed", "chunks_created": int }
+
+DELETE /v1/documents/{document_id}
+→ 202 Accepted  (async — removes all chunks from vector index)
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -615,6 +708,9 @@ def evaluate_faithfulness(query: str, retrieved_chunks: list[str],
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 10,000 queries/sec, 1M documents per tenant.
 

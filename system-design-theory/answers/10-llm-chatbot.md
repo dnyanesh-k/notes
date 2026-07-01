@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 An LLM-based chatbot at scale is a system that lets users have multi-turn conversations with a large language model — asking follow-up questions, referencing earlier parts of the conversation, and receiving coherent, context-aware responses. ChatGPT, Claude, and Gemini are the most visible examples, but the same architecture powers customer support bots, coding assistants, and internal Q&A tools inside organizations.
@@ -62,7 +66,33 @@ LLM chatbot combines everything: RAG (Q9), streaming, session management, and co
 
 ---
 
+## Functional Requirements
+
+- Users should be able to have multi-turn conversations with context preserved across up to 20 turns
+- The chatbot should stream responses token by token for perceived responsiveness
+- Users should be able to start a new conversation session and access past session history
+
+> **How to say this in the interview:** *"I see three core things users need — have multi-turn conversations with context preserved across up to 20 turns, receive responses streamed token by token so the experience feels responsive even before the full answer is ready, and start fresh sessions and access previous ones. Does that match what you had in mind?"* The streaming point is worth calling out explicitly — it has a direct impact on the delivery protocol choice and changes how users perceive latency.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Time-to-first-token (TTFT) < 2 seconds**: first token must arrive quickly — streaming makes full latency feel lower
+- **Scale**: 100K concurrent users, each with an active SSE stream — connection management is the key constraint
+- **LLM cost control**: explicit goals — context window management + response caching for repeated queries
+- **Multi-tenant isolation**: one tenant's conversation history and RAG knowledge must never leak to another tenant
+- **Availability over Consistency**: conversation history lag is acceptable; chatbot unavailability is not
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 100K concurrent users
@@ -90,7 +120,47 @@ SSE connections:
 
 ---
 
+## Core Entities
+
+- **User** — identity + tenant membership
+- **Conversation** — session with turn history, RAG context reference, and token budget
+- **Message** — role (user/assistant) + content + token count + conversation_id
+- **RAGContext** — retrieved chunks injected into this turn's prompt (per-turn, not persisted)
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST + SSE (not WebSocket):** REST handles session creation and message history — standard request-response. For streaming token delivery, Server-Sent Events (SSE) is better than WebSocket because the communication is one-directional: the server streams tokens to the client. WebSocket is bidirectional, which adds unnecessary complexity when you only need the server to push. Say: *"I'll use REST for session management and history. For streaming the response, I'll use SSE rather than WebSocket — the token stream is server-to-client only, so WebSocket's bidirectional channel is overkill and SSE is simpler to implement, reconnect, and load-balance."*
+
+```
+POST /v1/conversations
+body: { "system_prompt"?: string }
+→ 201: { "conversation_id": string }
+
+POST /v1/conversations/{id}/messages
+body: { "content": string }
+→ 200 text/event-stream (SSE):
+  data: { "delta": "Hello" }
+  data: { "delta": " there" }
+  data: { "done": true, "usage": { "input_tokens": int, "output_tokens": int } }
+
+GET /v1/conversations/{id}/messages
+→ 200: { "messages": Message[] }
+
+DELETE /v1/conversations/{id}
+→ 204 No Content
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌──────────┐  HTTP/SSE  ┌─────────────┐   ┌──────────────────────────────────┐
@@ -587,6 +657,9 @@ Client experience:
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 1M concurrent users, 1M SSE connections.
 

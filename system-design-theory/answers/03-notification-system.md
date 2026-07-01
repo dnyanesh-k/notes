@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A notification system is responsible for delivering messages to users across multiple channels — push notifications on mobile, emails, SMS, and in-app alerts. It is a backend infrastructure component that sits between the event-producing services and the user-facing delivery channels. Almost every modern application — social media, e-commerce, banking, SaaS — relies on a notification system to communicate with its users.
@@ -62,7 +66,33 @@ Notification systems look simple but have a surprising number of failure modes. 
 
 ---
 
+## Functional Requirements
+
+- The system should be able to send push, email, and SMS notifications triggered by application events
+- Users should be able to configure notification preferences per channel and set quiet hours
+- The system should support scheduled bulk campaigns to millions of recipients
+
+> **How to say this in the interview:** *"I see three core things this system needs to do — send push, email, and SMS notifications triggered by application events, let users control their preferences per channel, and support scheduled bulk campaigns to large audiences. Does that capture it, or would you scope the channels or campaign feature differently?"* The verification question at the end is not politeness — it's the fastest way to find out if the interviewer wants you to go deeper on any one feature.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Delivery latency SLA**: push < 5s, email < 1 min, SMS < 30s — each channel has a different target
+- **At-least-once delivery with deduplication**: a duplicate notification is acceptable; a missed one is not
+- **Scale**: 10M notifications/day average; sustain 5M in a single campaign blast without degradation
+- **Decoupled from application**: notification failures must never block core app flow — fully async
+- **Retry with backoff**: up to 3 retries per notification; undeliverable → dead-letter queue
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 10M notifications/day
@@ -82,7 +112,45 @@ Storage:
 
 ---
 
+## Core Entities
+
+- **User** — identity + notification preferences + quiet hours per channel
+- **NotificationTemplate** — channel-specific message template with variables
+- **NotificationEvent** — trigger: event type + recipient list + payload
+- **DeliveryRecord** — per-notification: status (queued/sent/delivered/failed) + retry count
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST (and why not REST for delivery):** REST works cleanly for the control plane — creating notifications, managing templates, updating user preferences. But the actual delivery of millions of notifications is not an API call pattern; it is a queue-driven, async, fan-out process. Say: *"I'll use REST for the configuration and trigger interface — creating a notification, setting preferences. The actual delivery path is Kafka-driven, not HTTP, because fan-out to millions of users cannot happen synchronously through an API. These are two different things: REST is the control plane, the queue is the delivery mechanism."*
+
+```
+POST /v1/notifications
+body: { "user_ids": string[], "channel": "push|email|sms", "template_id": string, "payload": object }
+→ 202 Accepted: { "notification_id": string, "status": "queued" }
+
+POST /v1/campaigns
+body: { "segment": object, "template_id": string, "scheduled_at"?: timestamp }
+→ 202 Accepted: { "campaign_id": string }
+
+GET /v1/notifications/{notification_id}/status
+→ 200: { "status": "queued|sent|delivered|failed", "attempts": int }
+
+PATCH /v1/users/{user_id}/preferences
+body: { "channels": { "push": bool, "email": bool, "sms": bool }, "quiet_hours": object }
+→ 200: { "preferences": object }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌────────────────┐     ┌──────────────────────────────────────────────┐
@@ -472,6 +540,9 @@ def process_notification(message: KafkaMessage):
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 100M notifications/day, peaks of 50M in a campaign blast.
 

@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A document processing pipeline is a system that takes raw input files — PDFs, Word documents, scanned images, HTML pages, spreadsheets — and transforms them into structured, searchable, and usable data. This is the foundational data preparation step that powers search engines, knowledge bases, RAG systems, compliance tools, and any application that needs to work with unstructured content at scale.
@@ -61,7 +65,33 @@ Document processing combines computer vision (OCR), NLP (extraction, classificat
 
 ---
 
+## Functional Requirements
+
+- The system should ingest documents of mixed types (PDF, Word, scanned images) and extract structured data (entities, key-value pairs, classification)
+- Documents with confidence below 85% should be routed to a human review queue automatically
+- Operators should be able to query processing status and retrieve structured extraction results for any document
+
+> **How to say this in the interview:** *"I see three core capabilities the system needs — ingest documents of mixed types and extract structured data from them, automatically route low-confidence extractions to a human review queue, and let operators query status and retrieve results for any document. Does that match what you had in mind?"* The human review routing is the most interesting design decision here — confirm it's in scope early so you can design the confidence threshold and queue mechanism deliberately.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Processing SLA of 5 minutes**: upload → structured output within 5 minutes — downstream systems depend on this
+- **At-least-once processing**: a duplicate extraction is preferable to a skipped document — all stages must be idempotent
+- **Scale**: 500K documents/day ≈ 5.8 docs/sec average; handle bursts to 50 docs/sec without SLA breach
+- **Durability**: raw documents preserved permanently; extraction results must be auditable
+- **Human review queue responsiveness**: low-confidence items must not back up — reviewers need < 1s queue UI load
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Volume: 500K docs/day = 5.8 docs/sec average
@@ -84,7 +114,66 @@ Processing time targets:
 
 ---
 
+## Core Entities
+
+- **Document** — raw file + source metadata + upload timestamp + storage reference
+- **ProcessingJob** — document_id + current stage + status + confidence + retry_count
+- **ExtractionResult** — structured output (entities, KV pairs, classification) + confidence score
+- **ReviewTask** — queued item for human review: context + suggested extraction + reviewer assignment
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## Data Flow
+
+> **When to use this in the interview:** For pipeline-style systems, sketch the data flow as a numbered list before drawing boxes. Say: *"Let me walk through what happens to a document from the moment it is uploaded to when the structured output is ready."* This makes the HLD diagram click immediately.
+
+**Document processing pipeline (upload → structured output):**
+
+1. Client uploads document → API returns 202 Accepted with `document_id`
+2. File stored in object storage (S3); metadata record created with status "queued"
+3. Upload event published to the processing queue (Kafka)
+4. OCR Worker pulls the event; performs OCR if the document is a scanned image or PDF
+5. Extraction Worker extracts entities, key-value pairs, and classifications using an ML model
+6. Confidence score computed for the extraction result
+7. **Confidence ≥ 85%:** result written to the structured output store, status → "complete"
+8. **Confidence < 85%:** extraction routed to the Human Review Queue, status → "review"
+9. Human reviewer approves or corrects the output via the review UI
+10. Approved output written to the structured output store, status → "complete"
+
+---
+
+## API Design
+
+> **Why REST (trigger-and-poll pattern):** Document processing is inherently asynchronous — a PDF can take minutes to OCR, extract, and classify. REST handles this cleanly with the trigger-and-poll pattern: the client submits a document (POST → 202 Accepted), then polls the status endpoint until processing completes. Say: *"I'll use REST with the trigger-and-poll pattern. The upload endpoint returns 202 Accepted immediately and processing happens asynchronously. The client polls the status endpoint — this is simpler and more reliable than holding a long HTTP connection open or using webhooks, especially since processing can take several minutes."*
+
+```
+POST /v1/documents
+body: multipart/form-data { file, document_type?: string, metadata?: object }
+→ 202 Accepted: { "document_id": string, "status": "queued" }
+
+GET /v1/documents/{document_id}/status
+→ 200: { "status": "queued|processing|extracted|review|complete|failed", "confidence": float }
+
+GET /v1/documents/{document_id}/result
+→ 200: { "extracted": object, "confidence": float, "classification": string }
+
+GET /v1/review-queue?limit=20
+→ 200: { "tasks": ReviewTask[] }
+
+PATCH /v1/review-queue/{task_id}
+body: { "corrected_output": object, "approved": bool }
+→ 200: { "task_id": string, "status": "approved|rejected" }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -523,6 +612,9 @@ CREATE TABLE processing_events (
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 5M documents/day = 58 docs/sec average.
 

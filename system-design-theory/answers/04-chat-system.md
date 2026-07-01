@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A chat system is a real-time messaging platform that allows users to send and receive messages instantly, either one-on-one or in groups. WhatsApp, Slack, Telegram, and Facebook Messenger are all examples. The defining characteristic of a chat system is the real-time, bidirectional communication requirement — messages must appear on the recipient's screen within milliseconds of being sent, even if the sender and receiver are in different parts of the world.
@@ -68,7 +72,33 @@ Chat is one of the hardest system design problems because it combines real-time 
 
 ---
 
+## Functional Requirements
+
+- Users should be able to send and receive messages in real time in 1:1 and group chats (up to 500 members)
+- Users should be able to see message delivery receipts (sent, delivered, read)
+- Users should be able to see online presence status (active now / last seen X minutes ago)
+
+> **How to say this in the interview:** *"I see three core things users need — send and receive messages in real time in 1:1 and group chats, see delivery receipts showing whether a message was sent, delivered, and read, and know who's currently online or when someone was last active. Does that match your thinking?"* Delivery receipts and presence are often scope debates — stating them explicitly invites the interviewer to narrow scope if they want to keep it simpler.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Real-time delivery < 100ms** for online users — requires WebSocket, not polling
+- **Availability over Consistency (AP)**: eventual message ordering is acceptable; unavailability is not
+- **Durability**: messages stored permanently — users expect full chat history on any device
+- **Scale**: 500M DAU, 50B messages/day ≈ 578K messages/sec at peak
+- **Group fan-out**: sending to a 500-member group must not block or create 500 synchronous DB writes
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 50B messages/day
@@ -95,7 +125,43 @@ This immediately tells you: MySQL won't handle 580K writes/sec on a single prima
 
 ---
 
+## Core Entities
+
+- **User** — identity + connection state + last seen timestamp
+- **Conversation** — 1:1 or group, with member list and metadata
+- **Message** — content + sender_id + timestamp + conversation_id
+- **DeliveryReceipt** — per-message per-user: sent / delivered / read
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why two protocols:** This is one of the few systems where two protocols serve genuinely different purposes. REST handles session creation and message history retrieval — standard request-response, no need for a persistent connection. WebSocket is necessary for real-time bidirectional messaging because HTTP cannot push messages to the client. Say: *"I'll use REST for conversation setup and fetching history — those are standard request-response operations. For live messaging I need WebSocket because HTTP is pull-based; I can't push a new message to a client over plain HTTP without polling. These serve different needs in the same system."*
+
+```
+POST /v1/conversations
+body: { "member_ids": string[], "type": "direct|group", "name"?: string }
+→ 201: { "conversation_id": string }
+
+GET /v1/conversations/{id}/messages?before=<cursor>&limit=50
+→ 200: { "messages": Message[], "next_cursor": string }
+
+// WebSocket — bidirectional real-time
+→ send:    { "type": "message", "conversation_id": string, "content": string }
+← receive: { "type": "message", "message": Message }
+← receive: { "type": "receipt", "message_id": string, "status": "delivered|read" }
+← receive: { "type": "presence", "user_id": string, "status": "online|offline", "last_seen": timestamp }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
                                     ┌───────────────────────────────┐
@@ -590,6 +656,9 @@ Members who have the group open receive it via polling or WebSocket subscription
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 At 5B messages/sec, 5.8M messages/sec:
 

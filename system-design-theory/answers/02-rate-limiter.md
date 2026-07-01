@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 A rate limiter controls how many requests a user, client, or service can make to a system within a defined time window. When the number of requests exceeds the allowed threshold, the extra requests are either rejected with an error (HTTP 429 Too Many Requests), delayed, or deprioritized. It is a foundational component in any large-scale distributed system.
@@ -60,7 +64,33 @@ Rate limiter is a design interview that tests whether you understand distributed
 
 ---
 
+## Functional Requirements
+
+- The system should allow or deny incoming requests based on configurable rate limit rules per user, IP, and endpoint
+- Denied requests should receive a 429 Too Many Requests response with a Retry-After header
+- Operators should be able to define and update rate limit rules without redeploying
+
+> **How to say this in the interview:** *"I see three core capabilities here — the system should allow or block requests based on configured rules, return a proper 429 with retry guidance when a client is limited, and let operators update those rules without a deployment. Does that match what you had in mind, or would you scope it differently?"* Always end with a question — it signals that you're building collaboratively, not just presenting.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Sub-millisecond decision latency**: rate limiter is in the critical path of every request — must add < 1ms
+- **Availability over Consistency (AP)**: if the rate limiter fails, fail-open (allow requests) rather than blocking all traffic
+- **Scale to 1.6M RPS**: horizontally distributed; no single bottleneck
+- **Rule propagation < 10 seconds**: rule changes must apply near-instantly across all nodes
+- **Small over-limit tolerance**: slight over-counting (from distributed race) is acceptable; under-counting (missing a burst) is not
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 10M active users
@@ -79,7 +109,43 @@ Redis in same datacenter: 0.1-0.5ms round trip → feasible
 
 ---
 
+## Core Entities
+
+- **RateLimitRule** — endpoint + user_tier + limit + window_seconds
+- **RequestCounter** — user_id/IP + window_key → count (stored in Redis)
+- **BlockedRequest** — audit record of rejected requests with reason
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why not REST here:** This is an internal system interface, not a user-facing API. The rate limit check is called by the API Gateway in the critical path of every request — making gRPC the better production choice for the check endpoint, since it is faster and strongly typed. The admin rule management interface uses REST for simplicity and broad tooling compatibility. Say: *"For the rate limit check itself I'd lean toward gRPC in production — it is in the critical path of every single request and the overhead of HTTP/JSON adds up. For the admin interface to manage rules, REST is perfectly fine."*
+
+```
+// Called by API Gateway before routing each request
+POST /internal/rate-limit/check
+body: { "user_id"?: string, "ip": string, "endpoint": string, "tier": string }
+→ 200: { "allowed": true, "remaining": int, "reset_at": timestamp }
+→ 429: { "allowed": false, "retry_after_ms": int }
+
+// Admin — rule management
+POST /v1/rules
+body: { "endpoint": string, "tier": string, "limit": int, "window_sec": int }
+→ 201: { "rule_id": string }
+
+DELETE /v1/rules/{rule_id}
+→ 204 No Content
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
                     ┌─────────────────────────────────────────┐
@@ -510,6 +576,9 @@ Total overhead: ~0.5ms (one Redis round trip)
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 **Current:** 1.6M checks/sec
 **10x:** 16M checks/sec

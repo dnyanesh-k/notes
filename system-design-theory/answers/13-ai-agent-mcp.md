@@ -4,6 +4,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 An AI agent is a system where a large language model does not just answer questions — it takes actions. Given a goal, the agent reasons about what steps to take, calls tools to gather information or perform operations, observes the results, and continues reasoning until the task is complete. This is fundamentally different from a chatbot: a chatbot responds, an agent acts.
@@ -64,7 +68,72 @@ AI agents go beyond chatbots: they take actions, use tools, and loop until a tas
 
 ---
 
+## Functional Requirements
+
+- Users should be able to invoke an AI agent that reads from and writes to connected tools (Jira, GitHub, internal DBs) using natural language
+- The agent should request explicit user confirmation before executing any write or destructive action
+- Users should be able to track the status and step-by-step progress of multi-step async agent tasks
+
+> **How to say this in the interview:** *"I see three core things users need — invoke an AI agent that can read from and write to connected tools using natural language, receive explicit confirmation requests before any write or destructive action executes, and track the status and progress of multi-step async tasks. Does that capture it?"* The confirmation-before-write requirement is the most important safety constraint in the whole system — stating it as a first-class functional requirement, not just an NFR, tells the interviewer you're thinking about this seriously.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Sync path < 2 seconds TTFT**: single-turn Q&A must feel immediate — tool call overhead hidden via streaming
+- **HITL for all writes (non-negotiable)**: no destructive action executes without explicit human approval
+- **Multi-tenant tool isolation**: user A's credentials and permissions must never be visible to user B's session
+- **Max 10 steps per session**: hard limit to prevent infinite loops and runaway LLM cost
+- **Full auditability**: every tool call, approval decision, and reasoning step logged with actor + timestamp
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points above with its specific constraint attached. Always quantify — "the system should be secure" signals nothing; "no write action executes without explicit human approval, non-negotiable" shows you're serious about safety. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — here, HITL safety and auditability are the defining constraints, so they earn their place.
+
+---
+
+## Core Entities
+
+- **AgentSession** — user + initial prompt + tool permissions + step history
+- **ToolCall** — tool name + input + output + approval_status + timestamp
+- **ApprovalRequest** — pending write action + human-readable context shown to user
+- **StepLog** — ordered record of reasoning steps and tool invocations
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST + SSE:** Session management and approval operations are standard request-response — REST is right for those. For streaming the agent's reasoning and tool call events in real time, SSE is better than WebSocket because the stream is server-to-client only. The approval endpoint is a synchronous POST because the agent is paused and waiting for the human response — that is a clear request-response. Say: *"I'll use REST for session management and approvals. For streaming the agent's reasoning as it works, SSE is the right choice over WebSocket — the event stream is one-directional, server pushing to client, so bidirectional WebSocket is unnecessary complexity. The approval endpoint is a plain POST because at that point the agent is stopped, waiting for a yes or no."*
+
+```
+POST /v1/sessions
+body: { "initial_prompt": string, "tools": string[] }
+→ 201: { "session_id": string }
+
+POST /v1/sessions/{id}/messages
+body: { "content": string }
+→ 200 text/event-stream (SSE): streaming agent reasoning + tool call events
+
+GET /v1/sessions/{id}/steps
+→ 200: { "steps": StepLog[] }
+
+POST /v1/sessions/{id}/approve
+body: { "approval_id": string, "approved": bool }
+→ 200: { "status": "approved|rejected" }
+
+GET /v1/sessions/{id}/status
+→ 200: { "status": "running|waiting_approval|complete|failed", "current_step": int }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -551,6 +620,9 @@ async def resume_agent_session(session_id: str):
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10K concurrent agent sessions:
 

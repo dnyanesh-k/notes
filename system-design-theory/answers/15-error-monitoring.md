@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 An error monitoring system collects, aggregates, and surfaces errors that occur in production software so that engineering teams can identify issues, understand their impact, and fix them before they affect more users. Sentry is the most well-known example. Every time an unhandled exception occurs in an application, the monitoring system captures the error, its full stack trace, the request context, and the user affected, and groups it with all other occurrences of the same error for analysis.
@@ -62,7 +66,33 @@ Error monitoring is deceptively complex. The basic idea — "collect errors, sho
 
 ---
 
+## Functional Requirements
+
+- Applications should be able to ingest error events (exceptions, crashes, log errors) from backend, frontend, and mobile clients
+- Users should be able to view grouped error issues with stack traces, frequency trends, and affected user counts
+- Users should be able to configure alert rules that fire on new issues, regressions, or frequency spikes
+
+> **How to say this in the interview:** *"I see three core things this system needs to do — ingest error events from backend, frontend, and mobile clients, let teams view grouped issues with stack traces and frequency trends, and configure alerts that fire when something new or unexpected happens. Does that capture it?"* Error grouping is where the real product value is — stating it as a functional requirement rather than leaving it implied shows you understand what makes a monitoring tool useful versus just a log store.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Ingest latency < 1 second**: errors must be captured immediately — slow ingest delays incident response
+- **High write throughput**: 1B events/day ≈ 11,574 events/sec — write path must scale horizontally via Kafka
+- **Read availability > Write consistency**: teams must always be able to view errors even during ingestion backpressure
+- **Retention tiering**: raw events 30 days; aggregated stats 2 years — storage cost scales with retention window
+- **Grouping accuracy**: grouping raw events (11K/sec) into meaningful issues (hundreds) is the core value — fingerprinting must be reliable
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Events: 1B/day = 11,574 events/sec peak
@@ -92,7 +122,51 @@ Alert evaluation:
 
 ---
 
+## Core Entities
+
+- **ErrorEvent** — raw inbound error: stack trace + context + timestamp + source platform
+- **Issue** — grouped set of ErrorEvents sharing the same fingerprint (error type + location)
+- **AlertRule** — condition + threshold + notification channel per user/team
+- **SourceMap** — JavaScript/mobile symbol table for stack trace deobfuscation
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST (with a batching note for the ingest path):** The dashboard API is standard REST — querying issues and updating status is simple CRUD. The ingest endpoint deserves a deliberate choice: client SDKs send errors in batches (not one at a time) to reduce per-event overhead at 11K events/sec. WebSocket is not needed because error reporting is fire-and-forget — the SDK does not need a response per event. Say: *"I'll use REST for both paths. For the dashboard, it is standard CRUD. For ingestion, the SDK batches errors into a single POST to reduce overhead — at 11K events per second, per-event HTTP calls would be prohibitive. The ingest endpoint returns 202 Accepted and we never block the client waiting for confirmation."*
+
+```
+// Client SDK → ingest (bulk to reduce overhead)
+POST /v1/ingest
+body: { "errors": ErrorEvent[], "sdk_version": string }
+→ 202 Accepted
+
+// Dashboard — issues
+GET /v1/issues?status=open&sort=frequency&limit=20
+→ 200: { "issues": Issue[] }
+
+GET /v1/issues/{issue_id}
+→ 200: { "issue": Issue, "sample_events": ErrorEvent[], "trend": object }
+
+PATCH /v1/issues/{issue_id}
+body: { "status": "resolved|ignored" }
+→ 200: { "issue": Issue }
+
+// Alerting
+POST /v1/alerts
+body: { "condition": "new_issue|regression|spike", "threshold": object, "notify": { "email": string } }
+→ 201: { "alert_id": string }
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -691,6 +765,9 @@ def record_affected_user(issue_id: int, user_id: str):
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 10B events/day = 115K events/sec peak.
 

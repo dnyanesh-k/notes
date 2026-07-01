@@ -2,6 +2,10 @@
 
 ---
 
+> **Interview Phase Map** → Phase 1: Requirements (5 min) · Phase 2: Core Entities (2 min) · Phase 3: API Design (5 min) · Phase 4: High Level Design (12 min) · Phase 5: Deep Dives (10 min)
+
+---
+
 ## Introduction
 
 Search autocomplete is the feature that suggests completions as a user types into a search box. Google shows query suggestions after every keystroke, e-commerce platforms suggest product names, and IDEs suggest code completions. The system must return relevant suggestions in under 100 milliseconds — fast enough that the user perceives it as instantaneous and the suggestions keep up with their typing speed.
@@ -62,7 +66,33 @@ Autocomplete has two separate systems: a **data pipeline** (computing the top su
 
 ---
 
+## Functional Requirements
+
+- Users should be able to see up to 10 autocomplete suggestions per keystroke as they type
+- Suggestions should reflect globally trending queries, refreshed within 1 hour
+- The system should return suggestions in under 100ms per keystroke
+
+> **How to say this in the interview:** *"I see three core things here — show up to 10 autocomplete suggestions per keystroke as users type, have those suggestions reflect globally trending queries refreshed within about an hour, and return results in under 100ms so the experience feels instant. Does that match what you had in mind?"* The latency requirement is worth stating in the FRs rather than just the NFRs because sub-100ms shapes every design decision here.
+
+## Non-functional Requirements
+
+> **NFR = Non-Functional Requirements.** These answer *how the system behaves*, not *what it does*. FR = "users should be able to post a tweet" (the feature). NFR = "the feed must load in under 200ms" (the quality). Same system, completely different axis.
+
+- **Sub-100ms latency per keystroke**: user is typing — visible lag feels broken; serve from memory, not disk
+- **Availability over Consistency (AP)**: slightly stale suggestions (< 1 hour) are acceptable; outage is not
+- **Scale**: 5,800 requests/sec at peak (10M DAU × 5 searches × 10 keystrokes / 86,400)
+- **Read-heavy with batch writes**: the trie/index is updated hourly from aggregated logs — not per query
+- **Relevance over recency**: rank by global query frequency, not insertion time
+
+> **How to say this in the interview:** After agreeing on FRs, transition with: *"Now let me think about the non-functional requirements — the qualities the system needs to have, not just the features."* Then state each of the points listed above with its specific number or reason attached. Always quantify — "the system should be fast" signals nothing; the specific path and millisecond target is what shows you understand the system. Close with: *"Any specific constraints I should factor into my design?"*
+>
+> **Mental checklist for any system — pick your top 3:** Run through these mentally every time: *Is stale data acceptable, or must it always be correct?* (CAP — AP or CP?), *Which specific path must be fastest, and what is the millisecond target?* (Latency), *What is the read-to-write ratio and peak QPS?* (Scale). Add Durability, Security, or Compliance only when they are the defining constraint for that particular system — do not list all eight just to look thorough.
+
+---
+
 ## Back-of-Envelope Math
+
+> **Interview note:** Skip this section out loud. Say: *"I'll skip capacity estimation upfront — I'll do the math only if a specific number would directly change a design decision."* Then move on. The calculations above are study material — they show you the scale of this system and tell you what to optimize for.
 
 ```
 Autocomplete requests: 5,800/sec
@@ -84,7 +114,37 @@ Trie size:
 
 ---
 
+## Core Entities
+
+- **QueryLog** — raw search term + timestamp (input for trending aggregation)
+- **TrieNode** — prefix → top-10 pre-computed suggestions (the in-memory index)
+- **Suggestion** — query string + global frequency score
+
+> **How to say this in the interview:** *"Before I draw anything, let me get the core data entities on the board."* Then list them by name with a one-liner each. Close with: *"I'll keep the schema intentionally light right now — I'll add the relevant columns directly next to the database component as we go through each endpoint."* This signals good design instincts: you know that the schema emerges from the design, not the other way around.
+>
+> **What not to do:** Do not write out full table schemas with every column at this stage. The interviewer already knows a User table has a name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Save schema columns for the High Level Design phase, where you add them next to the relevant database in the diagram.
+
+---
+
+## API Design
+
+> **Why REST (GET only):** Autocomplete is a pure read system — the client sends a prefix as a query parameter, the server returns suggestions. A GET request with a query string handles this perfectly and is naturally cacheable at the CDN layer, which matters here since popular prefixes like "ho" are hit millions of times per minute. No WebSocket needed because the communication is one-directional request-response per keystroke. Say: *"I'll use REST GET — autocomplete is pure read and GET requests are cacheable at the CDN, which directly helps us hit the sub-100ms target. There's no reason to use a persistent connection here."*
+
+```
+GET /v1/suggestions?q=<prefix>&limit=10
+→ 200: { "suggestions": [{ "query": string, "score": int }] }
+
+// Internal — logged by search service, not user-facing
+POST /internal/query-log
+body: { "query": string, "timestamp": timestamp }
+→ 202 Accepted
+```
+
+---
+
 ## High Level Design
+
+> **How to build this diagram in the interview — this phase matters most:** Do not draw the complete architecture upfront. Start by saying: *"Let me build the architecture by going through each endpoint one at a time."* For each endpoint: draw only the components it needs, talk through the data flow out loud as you draw — the interviewer needs to follow your reasoning, not just see boxes appearing — and add the relevant schema fields directly next to the database component in the diagram. When you spot a need for a cache, queue, or additional component mid-drawing, say *"I can see we'll need a cache here — I'm going to note that and come back to it in deep dives"*, then keep moving. Do not solve deep dive problems during this phase. Finish High Level Design only when all three functional requirements have a working data path through the diagram. The diagram above is your reference for what the final state looks like.
 
 ```
 ┌──────────┐  keystroke  ┌───────────────┐          ┌──────────────────────┐
@@ -436,6 +496,9 @@ function onKeyPress(event) {
 ---
 
 ## Scale — What Breaks at 10x?
+
+> **How to transition into deep dives:** Say: *"I now have a working system that satisfies all three functional requirements. Let me harden it by addressing the non-functional requirements I identified at the start."* Then work through the NFRs one by one, starting with the most important. For each one, state the problem it creates in the current design, then your solution. After each point, pause and let the interviewer probe before moving on — do not monologue for more than two minutes at a stretch. The interviewer has specific signals they are looking for; if you are talking, they cannot ask for them. For senior roles, proactively identify the next bottleneck without waiting to be prompted.
+
 
 10x = 58,000 autocomplete requests/sec.
 
