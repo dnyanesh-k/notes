@@ -3,562 +3,791 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>System Design Interview Framework</title>
+<title>System Design Interview Framework — Hello Interview</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: #0f1117;
     color: #cbd5e1;
-    padding: 20px 16px 40px;
-    max-width: 720px;
+    padding: 20px 16px 60px;
+    max-width: 780px;
     margin: 0 auto;
-    line-height: 1.6;
+    line-height: 1.65;
   }
 
-  .header {
-    text-align: center;
-    margin-bottom: 24px;
-  }
-  .header h1 {
-    font-size: 18px;
-    font-weight: 700;
-    color: #f1f5f9;
-    margin-bottom: 4px;
-  }
-  .header p { font-size: 12px; color: #64748b; }
+  /* ── Header ── */
+  .header { text-align: center; margin-bottom: 20px; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px; }
+  .header p { font-size: 12px; color: #475569; }
 
-  .trigger-box {
-    background: #1a1f2e;
-    border: 1px solid #2563eb;
-    border-radius: 10px;
-    padding: 12px 16px;
-    margin-bottom: 20px;
-    text-align: center;
-  }
-  .trigger-box .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; margin-bottom: 6px; }
-  .trigger-box .flow { font-size: 15px; font-weight: 700; color: #60a5fa; letter-spacing: 0.5px; }
-
-  .steps { display: flex; flex-direction: column; gap: 14px; }
-
-  .step {
+  /* ── Phase Map ── */
+  .phase-map {
     background: #1a1f2e;
     border: 1px solid #2a3044;
     border-radius: 12px;
-    overflow: hidden;
+    padding: 14px 18px;
+    margin-bottom: 20px;
   }
-  .step-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    border-bottom: 1px solid #2a3044;
+  .phase-map-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #475569; margin-bottom: 10px;
   }
-  .step-num {
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 700; flex-shrink: 0;
+  .phase-map-flow {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   }
-  .step-title { font-size: 13px; font-weight: 600; color: #f1f5f9; flex: 1; }
-  .step-time {
-    font-size: 10px; color: #475569;
-    background: #0f1117; padding: 2px 8px; border-radius: 20px;
+  .phase-chip {
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
   }
-  .step-body { padding: 12px 16px; }
-  .step-tip { font-size: 11px; color: #64748b; margin-bottom: 10px; font-style: italic; }
+  .phase-chip.p1 { background: #1e3a5f; color: #60a5fa; }
+  .phase-chip.p2 { background: #1a3a2a; color: #4ade80; }
+  .phase-chip.p3 { background: #3a2a1a; color: #fb923c; }
+  .phase-chip.p4 { background: #2a2a1a; color: #facc15; }
+  .phase-chip.p5 { background: #2a1a3a; color: #c084fc; }
+  .phase-chip.p6 { background: #3a1a1a; color: #f87171; }
+  .phase-chip.opt { background: #1e2a1e; color: #64748b; border: 1px dashed #334155; }
+  .phase-arrow { color: #334155; font-size: 14px; }
+  .phase-map-note {
+    margin-top: 10px; font-size: 11px; color: #475569; font-style: italic;
+  }
 
+  /* ── Phase blocks ── */
+  .phase {
+    background: #1a1f2e;
+    border: 1px solid #2a3044;
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .phase-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 18px; border-bottom: 1px solid #2a3044;
+  }
+  .phase-badge {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .phase-title { font-size: 15px; font-weight: 700; color: #f1f5f9; flex: 1; }
+  .phase-time {
+    font-size: 11px; color: #475569;
+    background: #0f1117; padding: 3px 10px; border-radius: 20px;
+  }
+  .phase-body { padding: 14px 18px; }
+
+  /* Phase accent colors */
+  .ph1 .phase-badge { background: #1e3a5f; color: #60a5fa; }
+  .ph1 .phase-header { border-left: 3px solid #3b82f6; }
+  .ph2 .phase-badge { background: #1a3a2a; color: #4ade80; }
+  .ph2 .phase-header { border-left: 3px solid #22c55e; }
+  .ph3 .phase-badge { background: #3a2a1a; color: #fb923c; }
+  .ph3 .phase-header { border-left: 3px solid #f97316; }
+  .ph4 .phase-badge { background: #2a2a1a; color: #facc15; }
+  .ph4 .phase-header { border-left: 3px solid #eab308; }
+  .ph5 .phase-badge { background: #2a1a3a; color: #c084fc; }
+  .ph5 .phase-header { border-left: 3px solid #a855f7; }
+  .ph6 .phase-badge { background: #3a1a1a; color: #f87171; }
+  .ph6 .phase-header { border-left: 3px solid #ef4444; }
+
+  /* ── Sub-sections ── */
+  .sub-section { margin-bottom: 16px; }
+  .sub-section:last-child { margin-bottom: 0; }
   .sub-label {
     font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
-    color: #475569; margin: 10px 0 6px;
+    color: #475569; margin-bottom: 8px; padding-bottom: 4px;
+    border-bottom: 1px solid #1e293b;
   }
 
-  .questions { display: flex; flex-direction: column; gap: 5px; }
-  .question {
+  /* ── Items ── */
+  .items { display: flex; flex-direction: column; gap: 6px; }
+  .item {
     display: flex; gap: 8px; align-items: flex-start;
-    font-size: 12px; color: #cbd5e1; line-height: 1.5;
+    font-size: 12px; color: #cbd5e1; line-height: 1.55;
   }
-  .question::before { content: "→"; flex-shrink: 0; margin-top: 1px; color: #475569; }
-  .question strong { color: #e2e8f0; }
+  .item-bullet { flex-shrink: 0; margin-top: 1px; }
+  .item-bullet.arrow { color: #475569; }
+  .item-bullet.dot { color: #3b82f6; font-size: 8px; margin-top: 4px; }
+  .item-bullet.check { color: #22c55e; }
+  .item-bullet.warn { color: #f87171; }
+  .item-bullet.q { color: #dc2626; font-weight: 700; font-size: 11px; }
+  .item strong { color: #e2e8f0; }
+  .item em { color: #94a3b8; }
 
-  .divider { height: 1px; background: #2a3044; margin: 8px 0; }
+  /* ── Say box ── */
+  .say-box {
+    background: #0f1a2e;
+    border: 1px solid #1e3a5f;
+    border-left: 3px solid #3b82f6;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 10px 0;
+  }
+  .say-box-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #3b82f6; margin-bottom: 6px; font-weight: 700;
+  }
+  .say-box-text { font-size: 12px; color: #93c5fd; font-style: italic; line-height: 1.6; }
 
-  /* Step accent colors */
-  .step-1 .step-num { background: #1e3a5f; color: #60a5fa; }
-  .step-1 .step-header { border-left: 3px solid #3b82f6; }
-  .step-2 .step-num { background: #1a3a2a; color: #4ade80; }
-  .step-2 .step-header { border-left: 3px solid #22c55e; }
-  .step-3 .step-num { background: #3a2a1a; color: #fb923c; }
-  .step-3 .step-header { border-left: 3px solid #f97316; }
-  .step-4 .step-num { background: #2a1a3a; color: #c084fc; }
-  .step-4 .step-header { border-left: 3px solid #a855f7; }
-  .step-5 .step-num { background: #1a3a3a; color: #34d399; }
-  .step-5 .step-header { border-left: 3px solid #10b981; }
-  .step-6 .step-num { background: #3a1a1a; color: #f87171; }
-  .step-6 .step-header { border-left: 3px solid #ef4444; }
+  /* ── Don't box ── */
+  .dont-box {
+    background: #1f0f0f;
+    border: 1px solid #3a1a1a;
+    border-left: 3px solid #ef4444;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 10px 0;
+  }
+  .dont-box-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #ef4444; margin-bottom: 6px; font-weight: 700;
+  }
+  .dont-box-text { font-size: 12px; color: #fca5a5; line-height: 1.6; }
 
-  /* Diagram box */
+  /* ── Tip box ── */
+  .tip-box {
+    background: #1a1f10;
+    border: 1px solid #2a3a1a;
+    border-left: 3px solid #84cc16;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 10px 0;
+  }
+  .tip-box-text { font-size: 12px; color: #a3e635; line-height: 1.6; }
+
+  /* ── Checklist ── */
+  .checklist { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .checklist-item {
+    background: #0f1117;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 9px 12px;
+  }
+  .checklist-item-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 3px;
+  }
+  .checklist-item-label {
+    font-size: 12px; font-weight: 600; color: #e2e8f0;
+  }
+  .checklist-item-tag {
+    font-size: 9px; padding: 1px 7px; border-radius: 10px;
+    font-weight: 600; letter-spacing: 0.3px;
+  }
+  .tag-core { background: #1e3a5f; color: #60a5fa; }
+  .tag-situational { background: #2a2a1a; color: #a3a320; }
+  .checklist-item-desc { font-size: 11px; color: #64748b; line-height: 1.5; }
+  .checklist-item-example { font-size: 11px; color: #475569; font-style: italic; margin-top: 3px; }
+
+  /* ── Protocol table ── */
+  .protocol-table { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .protocol-row {
+    background: #0f1117;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 9px 12px;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .protocol-name {
+    font-size: 12px; font-weight: 700; color: #e2e8f0;
+    min-width: 100px; flex-shrink: 0;
+  }
+  .protocol-desc { font-size: 11px; color: #64748b; line-height: 1.5; flex: 1; }
+  .protocol-when { font-size: 11px; color: #94a3b8; font-style: italic; margin-top: 2px; }
+  .protocol-default { border-color: #1e3a5f; background: #0f1a2e; }
+  .protocol-default .protocol-name { color: #60a5fa; }
+
+  /* ── Diagram ── */
   .diagram-box {
     background: #0f1117;
     border: 1px solid #1e293b;
     border-radius: 8px;
-    padding: 10px 12px;
-    margin-top: 8px;
+    padding: 10px 14px;
+    margin-top: 10px;
     font-family: 'Courier New', monospace;
-    font-size: 11px;
-    color: #64748b;
-    line-height: 1.7;
+    font-size: 11px; color: #64748b; line-height: 1.8;
+    overflow-x: auto;
   }
   .diagram-box .comment { color: #334155; font-style: italic; }
   .diagram-box .node { color: #94a3b8; }
   .diagram-box .arrow { color: #475569; }
+  .diagram-box .highlight { color: #60a5fa; }
 
-  /* Tag chips */
-  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-  .tag {
-    font-size: 10px; padding: 2px 8px; border-radius: 20px;
-    font-weight: 600; letter-spacing: 0.3px;
+  /* ── NFR example ── */
+  .nfr-compare {
+    display: flex; gap: 8px; margin: 10px 0;
   }
-  .tag-hld { background: #1e3a5f; color: #60a5fa; }
-  .tag-lld { background: #2a1a3a; color: #c084fc; }
-  .tag-db  { background: #1a3a2a; color: #4ade80; }
-  .tag-api { background: #3a2a1a; color: #fb923c; }
-  .tag-xq  { background: #3a1a1a; color: #f87171; }
+  .nfr-bad, .nfr-good {
+    flex: 1; padding: 8px 12px; border-radius: 8px; font-size: 11px;
+  }
+  .nfr-bad { background: #1f0f0f; border: 1px solid #3a1a1a; color: #fca5a5; }
+  .nfr-good { background: #0f1a0f; border: 1px solid #1a3a1a; color: #86efac; }
+  .nfr-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 4px; }
+  .nfr-bad .nfr-label { color: #ef4444; }
+  .nfr-good .nfr-label { color: #22c55e; }
 
-  /* Cross questions section */
+  /* ── Divider ── */
+  .divider { height: 1px; background: #1e293b; margin: 14px 0; }
+
+  /* ── Cross-questions ── */
   .cross-q {
-    margin-top: 20px;
-    background: #1a1f2e;
-    border: 1px solid #2a3044;
-    border-radius: 12px;
-    overflow: hidden;
+    background: #1a1f2e; border: 1px solid #2a3044;
+    border-radius: 12px; overflow: hidden; margin-top: 20px;
   }
   .cross-q-header {
-    padding: 10px 16px;
-    background: #151a27;
+    padding: 11px 18px; background: #151a27;
     border-bottom: 1px solid #2a3044;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #f87171;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #f87171;
   }
-  .cross-q-body { padding: 12px 16px; }
-  .cross-q-group { margin-bottom: 12px; }
+  .cross-q-body { padding: 14px 18px; }
+  .cross-q-group { margin-bottom: 14px; }
   .cross-q-group:last-child { margin-bottom: 0; }
   .cross-q-title {
-    font-size: 10px; text-transform: uppercase;
-    letter-spacing: 1.2px; color: #475569; margin-bottom: 6px;
+    font-size: 9px; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #475569; margin-bottom: 7px;
+    padding-bottom: 4px; border-bottom: 1px solid #1e293b;
   }
   .cq {
     display: flex; gap: 8px; align-items: flex-start;
-    font-size: 12px; color: #94a3b8; margin-bottom: 4px; line-height: 1.5;
+    font-size: 12px; color: #94a3b8; margin-bottom: 5px; line-height: 1.5;
   }
   .cq::before { content: "?"; flex-shrink: 0; color: #dc2626; font-weight: 700; font-size: 11px; }
   .cq .ans { color: #64748b; font-style: italic; }
 
-  /* Golden rules */
+  /* ── AI template ── */
+  .ai-section {
+    background: #0f1117; border: 1px solid #1e3a2a;
+    border-radius: 12px; overflow: hidden; margin-top: 20px;
+  }
+  .ai-section-header {
+    padding: 11px 18px; background: #0d1f15;
+    border-bottom: 1px solid #1e3a2a;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #4ade80;
+  }
+  .ai-section-body { padding: 14px 18px; }
+
+  /* ── Golden rules ── */
   .golden-rules {
-    margin-top: 20px;
-    background: #1a1f2e;
-    border: 1px solid #2a3044;
-    border-radius: 12px;
-    padding: 14px 16px;
+    margin-top: 20px; background: #1a1f2e;
+    border: 1px solid #2a3044; border-radius: 12px; padding: 16px 18px;
   }
   .golden-rules h3 {
     font-size: 10px; text-transform: uppercase;
-    letter-spacing: 1.5px; color: #fbbf24; margin-bottom: 10px;
+    letter-spacing: 1.5px; color: #fbbf24; margin-bottom: 12px;
   }
   .rule {
-    display: flex; gap: 8px;
-    font-size: 12px; color: #94a3b8;
-    margin-bottom: 7px; line-height: 1.5;
+    display: flex; gap: 10px;
+    font-size: 12px; color: #94a3b8; margin-bottom: 8px; line-height: 1.5;
   }
-  .rule span { color: #fbbf24; font-weight: 700; flex-shrink: 0; }
+  .rule-num { color: #fbbf24; font-weight: 700; flex-shrink: 0; min-width: 18px; }
 
-  /* AI-specific section */
-  .ai-section {
-    margin-top: 20px;
-    background: #0f1117;
-    border: 1px solid #1e3a2a;
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .ai-section-header {
-    padding: 10px 16px;
-    background: #0d1f15;
-    border-bottom: 1px solid #1e3a2a;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #4ade80;
-  }
-  .ai-section-body { padding: 12px 16px; }
-
-  .footer {
-    text-align: center; margin-top: 20px;
-    font-size: 10px; color: #334155;
-  }
+  /* ── Footer ── */
+  .footer { text-align: center; margin-top: 24px; font-size: 10px; color: #334155; }
 </style>
 </head>
 <body>
 
+<!-- ──────────────── HEADER ──────────────── -->
 <div class="header">
   <h1>System Design Interview Framework</h1>
-  <p>For AI Engineer / Python Backend roles · 15–20 LPA target · 2.5 YOE</p>
+  <p>Based on Hello Interview Delivery Framework · For AI Engineer / Backend roles · 2.5 YOE</p>
 </div>
 
-<div class="trigger-box">
-  <div class="label">Mental Trigger — Say This Out Loud First</div>
-  <div class="flow">Requirements (FR+NFR+Entities) → API → HLD → Deep Dives (NFR-driven)</div>
+<!-- ──────────────── PHASE MAP ──────────────── -->
+<div class="phase-map">
+  <div class="phase-map-label">Interview Phase Map — Total ~38 minutes</div>
+  <div class="phase-map-flow">
+    <span class="phase-chip p1">① Requirements <em style="font-weight:400;color:#3b82f6"> 5m</em></span>
+    <span class="phase-arrow">→</span>
+    <span class="phase-chip p2">② Core Entities <em style="font-weight:400;color:#22c55e"> 2m</em></span>
+    <span class="phase-arrow">→</span>
+    <span class="phase-chip p3">③ API Design <em style="font-weight:400;color:#f97316"> 5m</em></span>
+    <span class="phase-arrow">→</span>
+    <span class="phase-chip opt">④ Data Flow <em style="font-weight:400;color:#64748b"> 5m (pipelines only)</em></span>
+    <span class="phase-arrow">→</span>
+    <span class="phase-chip p5">⑤ HLD <em style="font-weight:400;color:#a855f7"> 12m</em></span>
+    <span class="phase-arrow">→</span>
+    <span class="phase-chip p6">⑥ Deep Dives <em style="font-weight:400;color:#ef4444"> 10m</em></span>
+  </div>
+  <div class="phase-map-note">The easiest way to fail is to never deliver a working system. Structure keeps you from getting stuck and ensures you finish. — Hello Interview</div>
 </div>
 
-<div class="steps">
-
-  <!-- Step 1 -->
-  <div class="step step-1">
-    <div class="step-header">
-      <div class="step-num">1</div>
-      <div class="step-title">Clarify Requirements</div>
-      <div class="step-time">3–4 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">Never draw anything until you've asked these. Jumping straight to design = instant red flag.</div>
-
-      <div class="sub-label">Functional — what are we building?</div>
-      <div class="questions">
-        <div class="question">What are the <strong>2–3 core features</strong>? (skip nice-to-have)</div>
-        <div class="question">Who are the <strong>users</strong>? (consumer, B2B, internal?)</div>
-        <div class="question">What does the <strong>primary user flow</strong> look like end to end?</div>
-        <div class="question">Are we building for <strong>read, write, or both</strong>? (read-heavy changes everything)</div>
-      </div>
-
-      <div class="sub-label">Non-functional — qualities of the system, not features</div>
-      <div class="step-tip" style="margin-bottom:8px;color:#f87171">⚠ Always quantify. "The system should be fast" is meaningless to an interviewer. "Redirect latency under 50ms on the 10K RPS read path" shows you understand the system. Pick the top 3–5 from this checklist that are most relevant:</div>
-      <div class="questions">
-        <div class="question"><strong>CAP Theorem:</strong> Availability or consistency? (Partition tolerance is a given.) AP = stale data acceptable. CP = never stale, may be unavailable. Name your choice and say why.</div>
-        <div class="question"><strong>Environment Constraints:</strong> Mobile device (limited battery/bandwidth)? Streaming on 3G? On-device vs cloud inference? These constrain the design fundamentally.</div>
-        <div class="question"><strong>Scalability:</strong> Any unique scaling needs? Bursty traffic (holidays, live events)? What is the read vs write ratio — which needs to scale more?</div>
-        <div class="question"><strong>Latency:</strong> Which specific path must be fastest? What is the millisecond target? e.g. <em>"low latency search &lt;200ms"</em> — not just <em>"low latency."</em></div>
-        <div class="question"><strong>Durability:</strong> Can data be lost? Social feed = some loss OK. Banking / URL mappings = never acceptable. What is the RPO?</div>
-        <div class="question"><strong>Security:</strong> Data protection, access control, compliance (HIPAA, GDPR, SOC2)? Role-based permissions?</div>
-        <div class="question"><strong>Fault Tolerance:</strong> What happens when a component fails? Redundancy, failover, circuit breakers, recovery time?</div>
-        <div class="question"><strong>Compliance:</strong> Legal or regulatory requirements? Industry standards, data residency, audit trails?</div>
-      </div>
-      <div class="step-tip" style="margin-top:10px;color:#60a5fa">▶ Say: <em>"For non-functional requirements I'm thinking [NFR1 + specific number], [NFR2 + specific number], [NFR3 + specific number]. Any specific constraints I should factor in?"</em></div>
-
-      <div class="divider" style="margin:14px 0"></div>
-
-      <div class="sub-label">Core Entities — 2 minutes, before drawing anything</div>
-      <div class="step-tip" style="margin-bottom:8px">List 3–5 nouns only. Do NOT write full table schemas here. The interviewer knows User has email/name. Schema columns get added directly next to the database during HLD, not in a separate table upfront.</div>
-      <div class="questions">
-        <div class="question">Ask yourself: <strong>Who are the actors?</strong> (Users, Admins, Workers, Services — are any overlapping?)</div>
-        <div class="question">Ask yourself: <strong>What nouns are necessary to satisfy the FRs?</strong> Post a tweet → Tweet. Follow a user → Follow. Shorten a URL → ShortURL.</div>
-        <div class="question">Say: <em>"Before I draw, let me put the core entities on the board: [X, Y, Z with one-line roles]. I'll keep the schema light for now and add the relevant columns next to the database as we go through each endpoint."</em></div>
-      </div>
-    </div>
+<!-- ──────────────── PHASE 1: REQUIREMENTS ──────────────── -->
+<div class="phase ph1">
+  <div class="phase-header">
+    <div class="phase-badge">1</div>
+    <div class="phase-title">Requirements</div>
+    <div class="phase-time">~5 minutes</div>
   </div>
+  <div class="phase-body">
 
-  <!-- Step 2 -->
-  <div class="step step-2">
-    <div class="step-header">
-      <div class="step-num">2</div>
-      <div class="step-title">Scope + Estimates</div>
-      <div class="step-time">2–3 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">Say what you will and won't cover. Interviewers want to see you make deliberate choices.</div>
-      <div class="questions">
-        <div class="question">Say: <strong>"I'll design X. I'll skip auth, billing, and notifications — I'll call those external."</strong></div>
-        <div class="question"><strong>RPS:</strong> DAU × requests/user ÷ 86400 = RPS. Say the number out loud.</div>
-        <div class="question"><strong>Storage:</strong> record size × daily writes × retention years = total GB/TB.</div>
-        <div class="question"><strong>Read/write ratio:</strong> "This is 95% read, 5% write — I'll optimize for reads."</div>
-        <div class="question">Confirm: <strong>"Does this scope work for you before I start the diagram?"</strong></div>
+    <!-- 1A: Functional Requirements -->
+    <div class="sub-section">
+      <div class="sub-label">1A — Functional Requirements</div>
+      <div class="items">
+        <div class="item"><span class="item-bullet arrow">→</span><div>These are <strong>"Users / Clients should be able to…"</strong> statements — the core features of the system.</div></div>
+        <div class="item"><span class="item-bullet arrow">→</span><div>This is a <strong>back-and-forth</strong> with the interviewer. Ask targeted questions like a PM: <em>"Does the system need to do X?"</em>, <em>"What would happen if Y?"</em></div></div>
+        <div class="item"><span class="item-bullet arrow">→</span><div><strong>Maximum 3.</strong> Many of these systems have hundreds of features — your job is to identify and prioritize the top 3. A long list hurts more than it helps. Many top FAANGs directly evaluate your ability to focus on what matters.</div></div>
+      </div>
+
+      <div class="say-box">
+        <div class="say-box-label">▶ Say</div>
+        <div class="say-box-text">"I see three core things users need here — [FR1], [FR2], [FR3]. Does that capture the main use cases, or is there something you'd prioritize differently?"</div>
+      </div>
+
+      <div class="tip-box">
+        <div class="say-box-text" style="color:#a3e635">Always end with a verification question. It turns a recitation into a conversation and gives the interviewer a natural opening to redirect you before you build the wrong thing.</div>
       </div>
     </div>
+
+    <div class="divider"></div>
+
+    <!-- 1B: Non-functional Requirements -->
+    <div class="sub-section">
+      <div class="sub-label">1B — Non-Functional Requirements</div>
+
+      <div class="items" style="margin-bottom:10px">
+        <div class="item"><span class="item-bullet arrow">→</span><div><strong>NFR = Non-Functional Requirements.</strong> These answer <em>how the system behaves</em>, not <em>what it does</em>. FR = "users can post a tweet." NFR = "the feed loads in under 200ms." Same system, different axis.</div></div>
+        <div class="item"><span class="item-bullet arrow">→</span><div>Phrased as <strong>"The system should be able to…"</strong> or <strong>"The system should be…"</strong> statements.</div></div>
+        <div class="item"><span class="item-bullet arrow">→</span><div>Pick <strong>top 3–5 that are most relevant</strong> to this specific system. Do not list all eight just to show you know them.</div></div>
+      </div>
+
+      <div class="nfr-compare">
+        <div class="nfr-bad"><div class="nfr-label">✗ Meaningless</div>"The system should be low latency." — obvious, not useful, nearly all systems should be.</div>
+        <div class="nfr-good"><div class="nfr-label">✓ Useful</div>"The system should have low latency search, &lt;500ms" — identifies the specific path and gives a target.</div>
+      </div>
+
+      <div class="sub-label" style="margin-top:14px">NFR Checklist — pick your top 3–5 for this system</div>
+      <div class="checklist">
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">1. CAP Theorem</span>
+            <span class="checklist-item-tag tag-core">Core — always state</span>
+          </div>
+          <div class="checklist-item-desc">Should your system prioritize consistency or availability? Note: partition tolerance is a given in distributed systems. AP = stale data acceptable. CP = may be unavailable during partition.</div>
+          <div class="checklist-item-example">e.g. "I'd prioritize availability over consistency — a slightly stale redirect is far better than the service being down."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">2. Scalability</span>
+            <span class="checklist-item-tag tag-core">Core — always state</span>
+          </div>
+          <div class="checklist-item-desc">All systems need to scale, but does this one have unique requirements? Bursty traffic at specific times? Events like holidays? Also consider the read vs write ratio — which must scale more?</div>
+          <div class="checklist-item-example">e.g. "The scale here is roughly 833 reads for every 1 write — every design decision must optimize for reads."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">3. Latency</span>
+            <span class="checklist-item-tag tag-core">Core — always state</span>
+          </div>
+          <div class="checklist-item-desc">How quickly does the system need to respond? Specifically consider requests that require meaningful computation. Name the specific path and the target in milliseconds.</div>
+          <div class="checklist-item-example">e.g. "Redirect latency needs to be under 50ms — this is the hot path at 10K RPS and every millisecond is felt by every user."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">4. Durability</span>
+            <span class="checklist-item-tag tag-situational">Situational</span>
+          </div>
+          <div class="checklist-item-desc">How important is it that data is not lost? A social network might tolerate some data loss, but a banking system or URL mapping service cannot.</div>
+          <div class="checklist-item-example">e.g. "Losing a URL mapping permanently breaks a link — durability is non-negotiable here."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">5. Environment Constraints</span>
+            <span class="checklist-item-tag tag-situational">Situational</span>
+          </div>
+          <div class="checklist-item-desc">Any constraints on the environment? Running on a mobile device with limited battery? Limited memory or bandwidth (e.g. streaming video on 3G)? On-device vs cloud inference?</div>
+          <div class="checklist-item-example">e.g. "The client SDK runs on mobile — we need to batch errors to avoid draining battery with per-event HTTP calls."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">6. Security</span>
+            <span class="checklist-item-tag tag-situational">Situational</span>
+          </div>
+          <div class="checklist-item-desc">How secure does the system need to be? Consider data protection, access control, and compliance with regulations (HIPAA, GDPR, SOC2).</div>
+          <div class="checklist-item-example">e.g. "Multi-tenant isolation is a hard requirement — one tenant's data must never appear in another's results."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">7. Fault Tolerance</span>
+            <span class="checklist-item-tag tag-situational">Situational</span>
+          </div>
+          <div class="checklist-item-desc">How well does the system need to handle failures? Consider redundancy, failover, and recovery mechanisms.</div>
+          <div class="checklist-item-example">e.g. "The scheduler is a single point of failure — it needs leader election or active-passive failover."</div>
+        </div>
+
+        <div class="checklist-item">
+          <div class="checklist-item-header">
+            <span class="checklist-item-label">8. Compliance</span>
+            <span class="checklist-item-tag tag-situational">Situational</span>
+          </div>
+          <div class="checklist-item-desc">Are there legal or regulatory requirements? Industry standards, data protection laws, data residency requirements?</div>
+          <div class="checklist-item-example">e.g. "Healthcare data — HIPAA compliance means all PII must be encrypted at rest and we need a full audit trail."</div>
+        </div>
+
+      </div>
+
+      <div class="say-box" style="margin-top:12px">
+        <div class="say-box-label">▶ Say</div>
+        <div class="say-box-text">"For non-functional requirements I'm thinking: [NFR1 + specific number or reason], [NFR2 + specific number], [NFR3 + specific number]. Any specific constraints I should factor into my design?"</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 1C: Capacity Estimation -->
+    <div class="sub-section">
+      <div class="sub-label">1C — Capacity Estimation (skip in most interviews)</div>
+      <div class="items">
+        <div class="item"><span class="item-bullet warn">✗</span><div>Many candidates calculate DAU, storage, and QPS only to conclude <em>"ok, so it's a lot — got it."</em> As interviewers, we gain nothing from this except that you can do basic arithmetic. — Hello Interview</div></div>
+        <div class="item"><span class="item-bullet check">✓</span><div><strong>Only do the math when the number directly changes your design.</strong> Example: TopK system — you need to know if data fits in one min-heap or needs sharding. That is a number that changes the architecture.</div></div>
+      </div>
+      <div class="say-box">
+        <div class="say-box-label">▶ Say instead</div>
+        <div class="say-box-text">"I'd like to skip upfront estimation and do the math if a specific calculation would directly change a design decision. Is that okay?"</div>
+      </div>
+    </div>
+
   </div>
-
-  <!-- Step 3 -->
-  <div class="step step-3">
-    <div class="step-header">
-      <div class="step-num">3</div>
-      <div class="step-title">High Level Design (HLD)</div>
-      <div class="step-time">6–8 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">Draw boxes and arrows. Keep it to 5–7 components. Talk while you draw.</div>
-
-      <div class="sub-label">Standard HLD components — include what applies</div>
-      <div class="questions">
-        <div class="question"><strong>Client</strong> — web / mobile / API consumer</div>
-        <div class="question"><strong>CDN</strong> — if serving static assets or globally cached data</div>
-        <div class="question"><strong>API Gateway / Load Balancer</strong> — single entry point, routing, auth</div>
-        <div class="question"><strong>Core Service(s)</strong> — main business logic (stateless)</div>
-        <div class="question"><strong>Database</strong> — primary storage (SQL or NoSQL, justify)</div>
-        <div class="question"><strong>Cache</strong> — Redis if read-heavy or session data</div>
-        <div class="question"><strong>Message Queue</strong> — Kafka/SQS if async processing needed</div>
-        <div class="question"><strong>Worker/Consumer</strong> — if queue exists, show who processes it</div>
-        <div class="question"><strong>Object Storage</strong> — S3 if files, images, blobs</div>
-      </div>
-
-      <div class="diagram-box">
-        <span class="comment">// Template: draw this skeleton, fill in specifics</span><br>
-        <span class="node">Client</span>
-        <span class="arrow"> ──→ </span>
-        <span class="node">CDN</span>
-        <span class="arrow"> ──→ </span>
-        <span class="node">API Gateway</span>
-        <span class="arrow"> ──→ </span>
-        <span class="node">Service A</span>
-        <span class="arrow"> ──→ </span>
-        <span class="node">DB</span><br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-        <span class="arrow">↕ </span><span class="node">Cache</span><br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-        <span class="node">Service B</span>
-        <span class="arrow"> ←── </span>
-        <span class="node">Queue</span>
-        <span class="arrow"> ←── </span>
-        <span class="node">Service A</span>
-      </div>
-
-      <div class="sub-label">Talk-track while drawing</div>
-      <div class="questions">
-        <div class="question">Where does <strong>data enter</strong> the system?</div>
-        <div class="question">Where does it get <strong>stored</strong>?</div>
-        <div class="question">Where does <strong>processing</strong> happen?</div>
-        <div class="question">Where does the <strong>response go back</strong> to the user?</div>
-      </div>
-
-      <div class="tags">
-        <span class="tag tag-hld">HLD</span>
-        <span class="tag tag-api">Draw this on whiteboard / paper</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Step 4 -->
-  <div class="step step-4">
-    <div class="step-header">
-      <div class="step-num">4</div>
-      <div class="step-title">Low Level Design (LLD) — Pick 2 Components</div>
-      <div class="step-time">8–10 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">Pick the hardest/most unique parts. Don't try to deep-dive everything — you'll run out of time.</div>
-
-      <div class="sub-label">How to pick which components to LLD</div>
-      <div class="questions">
-        <div class="question">What is the <strong>most complex</strong> part? (unique to this problem, not generic CRUD)</div>
-        <div class="question">What is the <strong>biggest bottleneck</strong> at scale?</div>
-        <div class="question">What would an interviewer expect you to know for <strong>this role</strong>?</div>
-      </div>
-
-      <div class="sub-label">Data model — draw the schema</div>
-      <div class="questions">
-        <div class="question"><strong>Table/Document names</strong> and their key columns</div>
-        <div class="question"><strong>Relationships:</strong> 1:1, 1:N, N:M — draw the FK arrows</div>
-        <div class="question"><strong>Indexes:</strong> which columns get indexed and why</div>
-        <div class="question"><strong>Partitioning/sharding key</strong> if at scale</div>
-      </div>
-
-      <div class="diagram-box">
-        <span class="comment">// Example schema sketch (URL shortener)</span><br>
-        <span class="node">urls</span> { id, short_code (PK+idx), long_url, user_id, created_at, expires_at }<br>
-        <span class="node">users</span> { id, email (unique), created_at }<br>
-        <span class="node">clicks</span> { id, url_id (FK), timestamp, ip, country } <span class="comment">← partitioned by url_id</span>
-      </div>
-
-      <div class="sub-label">API design — state the contract</div>
-      <div class="questions">
-        <div class="question"><strong>Endpoint:</strong> POST /v1/urls  →  { short_code, expires_in }</div>
-        <div class="question"><strong>Response:</strong> 201 { short_url, expires_at }  |  400  |  409 (conflict)</div>
-        <div class="question"><strong>Auth:</strong> Bearer token / API key in header?</div>
-        <div class="question"><strong>Pagination:</strong> cursor-based (preferred) or offset for large collections</div>
-      </div>
-
-      <div class="sub-label">Component internals — the actual algorithm/flow</div>
-      <div class="questions">
-        <div class="question">What does the <strong>algorithm/logic</strong> look like step by step?</div>
-        <div class="question">What happens on <strong>failure</strong>? (retry, fallback, circuit breaker, dead letter queue)</div>
-        <div class="question">How is <strong>consistency</strong> maintained? (transaction, idempotency key, lock)</div>
-        <div class="question">How do you handle <strong>concurrent writes</strong>? (optimistic lock, CAS, queue)</div>
-      </div>
-
-      <div class="tags">
-        <span class="tag tag-lld">LLD</span>
-        <span class="tag tag-db">Schema</span>
-        <span class="tag tag-api">API</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Step 5 -->
-  <div class="step step-5">
-    <div class="step-header">
-      <div class="step-num">5</div>
-      <div class="step-title">Scale — What Breaks at 10x?</div>
-      <div class="step-time">3–4 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">This is where seniors separate from juniors. Lead by going back to the NFRs you stated in Phase 1 — say <em>"Let me now address the non-functional requirements I identified."</em> Then for each NFR: state the problem it creates in the current design, then your solution. Pause after each one and let the interviewer probe. Do not monologue.</div>
-
-      <div class="sub-label">Deep Dive framing — always lead with the NFR it addresses</div>
-      <div class="questions">
-        <div class="question"><strong>Latency NFR:</strong> "The current design hits the DB on every redirect. To get under 50ms I'd add a Redis cache in front — here's why and how..."</div>
-        <div class="question"><strong>Scale NFR:</strong> "At 10x the read replicas will saturate. I'd shard on [key] because..."</div>
-        <div class="question"><strong>Availability NFR:</strong> "If the primary DB goes down we'd lose availability. I'd use [replica failover / multi-AZ] to achieve the AP goal..."</div>
-        <div class="question"><strong>Durability NFR:</strong> "A URL mapping can never be lost. I'd use synchronous replication to at least 2 replicas before ACK..."</div>
-      </div>
-
-      <div class="sub-label">Stack-level breakdown (what to discuss per NFR)</div>
-      <div class="questions">
-        <div class="question"><strong>Client:</strong> CDN for static assets, edge caching for popular data</div>
-        <div class="question"><strong>API tier:</strong> stateless services → horizontal scale behind load balancer</div>
-        <div class="question"><strong>Cache:</strong> Redis cluster, cache-aside pattern, TTL strategy, invalidation</div>
-        <div class="question"><strong>DB reads:</strong> read replicas, connection pooling, query optimization</div>
-        <div class="question"><strong>DB writes:</strong> sharding (name the shard key), CQRS, write-behind cache</div>
-        <div class="question"><strong>Hot spots:</strong> consistent hashing to spread load, celebrity problem in social graphs</div>
-        <div class="question"><strong>Async:</strong> move non-critical writes to queue (Kafka), batch processing</div>
-        <div class="question"><strong>Global:</strong> multi-region, eventual consistency, data residency tradeoffs</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Step 6 -->
-  <div class="step step-6">
-    <div class="step-header">
-      <div class="step-num">6</div>
-      <div class="step-title">Trade-offs — Defend Your Choices</div>
-      <div class="step-time">2–3 min</div>
-    </div>
-    <div class="step-body">
-      <div class="step-tip">Use the format: "I chose X because Y, the trade-off is Z, and I'd revisit this if W changes."</div>
-
-      <div class="sub-label">Standard trade-off decisions you'll always be asked</div>
-      <div class="questions">
-        <div class="question"><strong>SQL vs NoSQL:</strong> SQL = ACID + relations + schema, NoSQL = flexible schema + horizontal write scale</div>
-        <div class="question"><strong>Sync vs Async:</strong> sync = simpler + consistent, async = resilient + decoupled + higher throughput</div>
-        <div class="question"><strong>Monolith vs Microservices:</strong> monolith = simple + fast iteration, micro = independent scale + deploy</div>
-        <div class="question"><strong>Consistency vs Availability (CAP):</strong> name which side you picked and why</div>
-        <div class="question"><strong>Strong vs Eventual consistency:</strong> banking = strong, social feed = eventual is fine</div>
-        <div class="question"><strong>Push vs Pull:</strong> push = low latency, pull = server controls load</div>
-      </div>
-    </div>
-  </div>
-
 </div>
 
-<!-- Cross Questions Section -->
+<!-- ──────────────── PHASE 2: CORE ENTITIES ──────────────── -->
+<div class="phase ph2">
+  <div class="phase-header">
+    <div class="phase-badge">2</div>
+    <div class="phase-title">Core Entities</div>
+    <div class="phase-time">~2 minutes</div>
+  </div>
+  <div class="phase-body">
+    <div class="items">
+      <div class="item"><span class="item-bullet arrow">→</span><div>Identify and list the <strong>core entities</strong> of your system. This defines terms, helps you understand the central data, and gives a foundation to build on.</div></div>
+      <div class="item"><span class="item-bullet arrow">→</span><div>These are the core entities that your <strong>API will exchange</strong> and that your system will <strong>persist in a data model.</strong></div></div>
+      <div class="item"><span class="item-bullet arrow">→</span><div>In the actual interview, this is as simple as <strong>jotting down a bulleted list</strong> and saying "this is my first draft."</div></div>
+    </div>
+
+    <div class="sub-label" style="margin-top:12px">Two questions to identify entities</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet q">1</span><div><strong>Who are the actors in the system?</strong> Are any overlapping? (User, Admin, Worker, Service)</div></div>
+      <div class="item"><span class="item-bullet q">2</span><div><strong>What are the nouns or resources necessary to satisfy the functional requirements?</strong> User posts tweet → Tweet. User follows user → Follow. User shortens URL → ShortURL.</div></div>
+    </div>
+
+    <div class="say-box" style="margin-top:12px">
+      <div class="say-box-label">▶ Say</div>
+      <div class="say-box-text">"Before I draw anything, let me get the core data entities on the board — [Entity 1: one-line role], [Entity 2: one-line role], [Entity 3: one-line role]. I'll keep the schema intentionally light here and add the relevant columns next to the database as we go through each endpoint."</div>
+    </div>
+
+    <div class="dont-box">
+      <div class="dont-box-label">✗ Do Not</div>
+      <div class="dont-box-text">Write full table schemas with every column here. The interviewer knows a User table has name, email, and password hash — writing those wastes time and signals you don't know what to prioritize. Schema columns get added during HLD, placed directly next to the relevant database component in the diagram. Aim to choose good names for entities — some interviewers evaluate this as a design signal.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── PHASE 3: API DESIGN ──────────────── -->
+<div class="phase ph3">
+  <div class="phase-header">
+    <div class="phase-badge">3</div>
+    <div class="phase-title">API or System Interface</div>
+    <div class="phase-time">~5 minutes</div>
+  </div>
+  <div class="phase-body">
+    <div class="items" style="margin-bottom:12px">
+      <div class="item"><span class="item-bullet arrow">→</span><div>Define the <strong>contract between your system and its users</strong> before drawing anything. This guides the HLD — you build the architecture to satisfy this contract.</div></div>
+      <div class="item"><span class="item-bullet arrow">→</span><div>Your endpoints should map <strong>directly to the functional requirements</strong> you identified. One FR = one or two endpoints.</div></div>
+    </div>
+
+    <div class="sub-label">Protocol choice — decide first, state your reason</div>
+    <div class="protocol-table">
+      <div class="protocol-row protocol-default">
+        <div>
+          <div class="protocol-name">REST ← default</div>
+          <div class="protocol-desc">HTTP verbs (GET, POST, PUT, DELETE) on plural resource names. Use for any client-facing API with CRUD operations on named resources. Resources should be plural nouns.</div>
+          <div class="protocol-when">Choose when: standard client-facing product, clear resource model, all clients need the same data shape.</div>
+        </div>
+      </div>
+      <div class="protocol-row">
+        <div>
+          <div class="protocol-name">GraphQL</div>
+          <div class="protocol-desc">Clients specify exactly what data they want. Avoids over-fetching and under-fetching.</div>
+          <div class="protocol-when">Choose when: diverse clients with different data needs (mobile vs web), complex nested data requirements.</div>
+        </div>
+      </div>
+      <div class="protocol-row">
+        <div>
+          <div class="protocol-name">gRPC / RPC</div>
+          <div class="protocol-desc">Action-oriented, binary protocol, strongly typed. Faster than REST for service-to-service.</div>
+          <div class="protocol-when">Choose when: internal service-to-service communication where performance is critical (e.g. rate limit check in the request path).</div>
+        </div>
+      </div>
+      <div class="protocol-row">
+        <div>
+          <div class="protocol-name">WebSocket / SSE</div>
+          <div class="protocol-desc">WebSocket = bidirectional persistent connection. SSE = server-to-client one-directional stream.</div>
+          <div class="protocol-when">Choose WebSocket when: real-time bidirectional (chat, live games). Choose SSE when: server streams to client only (LLM token streaming, agent reasoning). Design core REST API first, add WebSocket/SSE on top for real-time features.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub-label" style="margin-top:14px">Endpoint format — REST example</div>
+    <div class="diagram-box">
+      <span class="comment">// Use plural resource names. Current user from auth token — never from request body.</span><br><br>
+      <span class="highlight">POST</span>  <span class="node">/v1/tweets</span><br>
+      <span class="arrow">body: { "text": string }</span><br>
+      <span class="arrow">→ 201: { "tweet_id": string, "created_at": timestamp }</span><br><br>
+      <span class="highlight">GET</span>   <span class="node">/v1/tweets/{tweetId}</span>  <span class="arrow">→ Tweet</span><br><br>
+      <span class="highlight">POST</span>  <span class="node">/v1/follows</span><br>
+      <span class="arrow">body: { "followee_id": string }</span><br>
+      <span class="arrow">→ 201: { "follow_id": string }</span><br><br>
+      <span class="highlight">GET</span>   <span class="node">/v1/feed?cursor=&lt;cursor&gt;&amp;limit=20</span><br>
+      <span class="arrow">→ 200: { "posts": Tweet[], "next_cursor": string }</span>
+    </div>
+
+    <div class="dont-box" style="margin-top:10px">
+      <div class="dont-box-label">✗ Security Rule</div>
+      <div class="dont-box-text">Never rely on sensitive information like user IDs from request bodies or path parameters when they should come from authentication. Always derive the current user from the auth token in the request header, not from user input.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── PHASE 4: DATA FLOW (OPTIONAL) ──────────────── -->
+<div class="phase ph4">
+  <div class="phase-header">
+    <div class="phase-badge">4</div>
+    <div class="phase-title">Data Flow <span style="font-size:12px;color:#64748b;font-weight:400">(Optional — pipeline systems only)</span></div>
+    <div class="phase-time">~5 minutes</div>
+  </div>
+  <div class="phase-body">
+    <div class="items">
+      <div class="item"><span class="item-bullet arrow">→</span><div>For some backend systems — especially <strong>data-processing pipelines</strong> — describe the high-level sequence of operations the system performs on the inputs to produce outputs. <strong>Skip this for product-style interviews.</strong></div></div>
+      <div class="item"><span class="item-bullet arrow">→</span><div>Define via a simple <strong>numbered list</strong>. You'll use this flow to inform your HLD — every box in the diagram represents a step in this list.</div></div>
+    </div>
+
+    <div class="sub-label" style="margin-top:12px">When to use it</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet check">✓</span><div><strong>Use for:</strong> RAG pipeline, ETL pipeline, document processing, web crawler, ML training pipeline, event processing system.</div></div>
+      <div class="item"><span class="item-bullet warn">✗</span><div><strong>Skip for:</strong> URL shortener, chat system, news feed, rate limiter, file upload — these don't have a long sequence of transformations.</div></div>
+    </div>
+
+    <div class="say-box" style="margin-top:12px">
+      <div class="say-box-label">▶ Say</div>
+      <div class="say-box-text">"Before I draw the architecture, let me walk through what happens to [a document / a data record / a user query] from the moment it enters the system to when it produces the output."</div>
+    </div>
+
+    <div class="diagram-box" style="margin-top:10px">
+      <span class="comment">// Example: Web crawler data flow</span><br>
+      1. Fetch seed URLs<br>
+      2. Parse HTML<br>
+      3. Extract URLs<br>
+      4. Store data<br>
+      5. Repeat<br><br>
+      <span class="comment">// Example: RAG pipeline query flow</span><br>
+      1. User sends natural language query<br>
+      2. Embed query using embedding model<br>
+      3. ANN search in vector DB, pre-filtered by tenant_id<br>
+      4. Top-k chunks retrieved and re-ranked<br>
+      5. Chunks injected into LLM prompt<br>
+      6. LLM generates grounded answer with citations
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── PHASE 5: HIGH LEVEL DESIGN ──────────────── -->
+<div class="phase ph5">
+  <div class="phase-header">
+    <div class="phase-badge">5</div>
+    <div class="phase-title">High Level Design</div>
+    <div class="phase-time">~10–15 minutes</div>
+  </div>
+  <div class="phase-body">
+    <div class="items" style="margin-bottom:12px">
+      <div class="item"><span class="item-bullet arrow">→</span><div>Draw boxes and arrows representing components and how they interact. Your primary goal is to design an architecture that <strong>satisfies the API you defined</strong> and thus the requirements you identified.</div></div>
+    </div>
+
+    <div class="sub-label">How to build the diagram — most important guidance</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet q">1</span><div><strong>Go one endpoint at a time.</strong> Take your first endpoint. Draw only the components it needs. Then move to the second endpoint and add components. Build up to the final diagram incrementally.</div></div>
+      <div class="item"><span class="item-bullet q">2</span><div><strong>Talk while you draw.</strong> The interviewer needs to follow your reasoning, not just see boxes appearing. Be explicit about how data flows through the system and what state changes with each request.</div></div>
+      <div class="item"><span class="item-bullet q">3</span><div><strong>Add schema columns next to the database</strong> in the diagram — not in a separate table. Only write columns that are specifically relevant to your design. Don't write name, email, password hash — the interviewer knows those.</div></div>
+      <div class="item"><span class="item-bullet q">4</span><div><strong>When you spot complexity, name it and move on.</strong> Say: <em>"I can see we'll want a cache here — I'm noting that for deep dives."</em> Don't solve deep dive problems during HLD.</div></div>
+      <div class="item"><span class="item-bullet q">5</span><div><strong>Finish only when all three FRs have a working data path.</strong> Don't move to deep dives until the basic system works end-to-end for all requirements.</div></div>
+    </div>
+
+    <div class="dont-box" style="margin-top:12px">
+      <div class="dont-box-label">✗ Most Common Mistake</div>
+      <div class="dont-box-text">Candidates start layering complexity too early — adding caches, queues, and sharding before the basic design is complete. This results in never delivering a working system. Focus on a simple design that meets the core functional requirements, then add complexity in Deep Dives to satisfy the NFRs.</div>
+    </div>
+
+    <div class="sub-label" style="margin-top:14px">Standard HLD components — include what this system needs</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Client</strong> — web / mobile / API consumer</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>CDN</strong> — if serving static assets or globally cached hot data (e.g. popular URL redirects)</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>API Gateway / Load Balancer</strong> — single entry point, routing, rate limiting, auth, SSL termination</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Core Service(s)</strong> — main business logic, stateless for horizontal scale</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Database</strong> — primary storage (justify SQL vs NoSQL)</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Cache</strong> — Redis/Memcached if read-heavy or session data</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Message Queue</strong> — Kafka/SQS if async processing or fan-out needed</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Worker / Consumer</strong> — if queue exists, show who processes it</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Object Storage</strong> — S3 if files, images, blobs, or large binary data</div></div>
+    </div>
+
+    <div class="diagram-box" style="margin-top:12px">
+      <span class="comment">// Build this up endpoint by endpoint — don't draw it all at once</span><br><br>
+      <span class="node">Client</span><span class="arrow"> ──→ </span><span class="node">[CDN]</span><span class="arrow"> ──→ </span><span class="node">API Gateway</span><span class="arrow"> ──→ </span><span class="node">Service A</span><span class="arrow"> ──→ </span><span class="node">DB</span><br>
+      <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↕ Cache</span><br>
+      <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="node">Service B</span><span class="arrow"> ←── </span><span class="node">Queue</span><span class="arrow"> ←── </span><span class="node">Service A</span>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── PHASE 6: DEEP DIVES ──────────────── -->
+<div class="phase ph6">
+  <div class="phase-header">
+    <div class="phase-badge">6</div>
+    <div class="phase-title">Deep Dives</div>
+    <div class="phase-time">~10 minutes</div>
+  </div>
+  <div class="phase-body">
+    <div class="items" style="margin-bottom:12px">
+      <div class="item"><span class="item-bullet arrow">→</span><div>Now that you have a working system, <strong>harden it</strong> by going back to the NFRs you stated in Phase 1 and addressing them one by one.</div></div>
+      <div class="item"><span class="item-bullet arrow">→</span><div>Also: address edge cases, identify bottlenecks, and improve the design based on probes from the interviewer.</div></div>
+    </div>
+
+    <div class="say-box">
+      <div class="say-box-label">▶ Transition — say this to start Deep Dives</div>
+      <div class="say-box-text">"I now have a working system that satisfies all three functional requirements. Let me now harden it by addressing the non-functional requirements I identified at the start."</div>
+    </div>
+
+    <div class="sub-label" style="margin-top:14px">NFR-driven deep dive format — for each NFR</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet q">1</span><div><strong>State the problem it creates in the current design:</strong> <em>"The current design hits the DB on every redirect. At 10K RPS that's not sustainable — we won't hit the 50ms target."</em></div></div>
+      <div class="item"><span class="item-bullet q">2</span><div><strong>Propose your solution:</strong> <em>"I'd add Redis in front of the DB. Alias → original_url with a TTL. Cache hit rate for popular links is very high, so most redirects never touch the DB."</em></div></div>
+      <div class="item"><span class="item-bullet q">3</span><div><strong>Pause. Let the interviewer probe.</strong> Don't monologue for more than 2 minutes. They have specific signals they want — if you're talking, they can't ask for them.</div></div>
+      <div class="item"><span class="item-bullet q">4</span><div><strong>Move to the next NFR:</strong> <em>"Let me now address [next NFR]…"</em></div></div>
+    </div>
+
+    <div class="sub-label" style="margin-top:14px">Stack-level breakdown — what typically breaks and how to fix it</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Latency NFR:</strong> Add Redis cache → CDN at the edge → reduce DB round trips → connection pooling</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Scale NFR (reads):</strong> Read replicas → cache cluster → horizontal scale of stateless services</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Scale NFR (writes):</strong> Sharding (name the shard key) → CQRS → write-behind cache → Kafka for async</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Availability NFR:</strong> Multi-AZ DB → replica failover → health checks → circuit breakers</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Durability NFR:</strong> Synchronous replication to ≥ 2 replicas before ACK → regular backups → WAL</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Hotspot / celebrity problem:</strong> Consistent hashing → local in-memory cache → CDN for read hotspots</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Fault tolerance:</strong> Idempotency keys → retry with backoff → dead-letter queue for async → graceful degradation</div></div>
+    </div>
+
+    <div class="tip-box" style="margin-top:12px">
+      <div class="say-box-text" style="color:#a3e635"><strong>Seniority signal:</strong> Junior candidates expect the interviewer to point out issues. Senior candidates proactively identify the next bottleneck and lead the discussion. But always balance talking with listening — give the interviewer room to ask questions and probe your design. They have specific signals they need to get, and you'll miss it if you're monologuing.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── CROSS QUESTIONS ──────────────── -->
 <div class="cross-q">
   <div class="cross-q-header">⚡ Cross-Questions — They Will Ask These</div>
   <div class="cross-q-body">
 
     <div class="cross-q-group">
-      <div class="cross-q-title">Multi-Tenancy</div>
-      <div class="cq">How do you isolate tenant data? <span class="ans">→ institute_id on every row, from JWT not client, 4-layer defense</span></div>
-      <div class="cq">Why not Postgres RLS? <span class="ans">→ adds session-variable complexity with async ORMs; service layer is sufficient at this scale</span></div>
-    </div>
-
-    <div class="cross-q-group">
-      <div class="cross-q-title">Database</div>
-      <div class="cq">What if your DB becomes the bottleneck? <span class="ans">→ read replicas first, then caching, then sharding last</span></div>
-      <div class="cq">What's your shard key? <span class="ans">→ high cardinality, even distribution, avoid joins across shards</span></div>
-      <div class="cq">How do you handle schema migrations at scale? <span class="ans">→ expand-contract pattern: add nullable column, backfill, switch reads, drop old</span></div>
+      <div class="cross-q-title">Database Choice</div>
+      <div class="cq">Why SQL vs NoSQL? <span class="ans">→ SQL = ACID + relations + fixed schema. NoSQL = flexible schema + horizontal write scale. Name the specific tradeoff for this system.</span></div>
+      <div class="cq">What if your DB becomes the bottleneck? <span class="ans">→ read replicas first, then caching, then sharding last — in that order</span></div>
+      <div class="cq">What's your shard key? <span class="ans">→ high cardinality, even distribution, avoid joins across shards (e.g. user_id for user data, alias for URLs)</span></div>
+      <div class="cq">Schema migrations at scale? <span class="ans">→ expand-contract: add nullable column, backfill, switch reads, drop old column. Never rename in place.</span></div>
     </div>
 
     <div class="cross-q-group">
       <div class="cross-q-title">Caching</div>
-      <div class="cq">What's your cache invalidation strategy? <span class="ans">→ TTL + event-driven invalidation on write; write-through for critical data</span></div>
-      <div class="cq">What if cache fails? <span class="ans">→ thundering herd: use cache locks + probabilistic early expiry</span></div>
+      <div class="cq">Cache invalidation strategy? <span class="ans">→ TTL + event-driven invalidation on write. Write-through for critical data. Write-behind for high-throughput.</span></div>
+      <div class="cq">What if cache fails / thundering herd? <span class="ans">→ cache lock (mutex) + probabilistic early expiry. Or staggered TTLs.</span></div>
+      <div class="cq">Cache-aside vs write-through? <span class="ans">→ cache-aside = lazy loading (simpler, can have cache miss on first request). Write-through = always warm (adds write latency).</span></div>
     </div>
 
     <div class="cross-q-group">
       <div class="cross-q-title">Reliability</div>
-      <div class="cq">What happens if Service A fails mid-request? <span class="ans">→ idempotency key, retry with backoff, dead letter queue for async</span></div>
-      <div class="cq">How do you handle duplicate messages from Kafka? <span class="ans">→ idempotency key per message, dedup at consumer with Redis SET NX</span></div>
+      <div class="cq">What if a service fails mid-request? <span class="ans">→ idempotency key, retry with exponential backoff, dead-letter queue for async, circuit breaker for downstream</span></div>
+      <div class="cq">Duplicate messages from Kafka? <span class="ans">→ idempotency key per message, dedup at consumer with Redis SET NX or DB upsert on unique key</span></div>
+      <div class="cq">At-least-once vs exactly-once? <span class="ans">→ at-least-once is sufficient if your handlers are idempotent. Exactly-once is very expensive — usually not worth it.</span></div>
     </div>
 
     <div class="cross-q-group">
-      <div class="cross-q-title">Rate Limiting</div>
-      <div class="cq">How would you rate limit this API? <span class="ans">→ token bucket (smooth bursts) or sliding window (exact count). Redis ZADD or atomic counter</span></div>
-      <div class="cq">Per-user or per-IP? <span class="ans">→ per-user for authenticated, per-IP for public. Combine for public+auth APIs</span></div>
+      <div class="cross-q-title">API Design Probes</div>
+      <div class="cq">Pagination strategy? <span class="ans">→ cursor-based (preferred for large datasets, no skipped rows) vs offset (simple but breaks on inserts). Always cursor for feeds.</span></div>
+      <div class="cq">API versioning? <span class="ans">→ URL versioning (/v1/, /v2/) is simplest. Header versioning is cleaner but harder to test. Never break existing clients.</span></div>
+      <div class="cq">Rate limiting this API? <span class="ans">→ token bucket (smooths bursts) or sliding window (exact count). Redis atomic counter or ZADD sorted set. Per-user for auth, per-IP for public.</span></div>
     </div>
 
     <div class="cross-q-group">
-      <div class="cross-q-title">For AI/RAG Systems Specifically</div>
-      <div class="cq">How do you prevent hallucination? <span class="ans">→ retrieval grounding: only facts from retrieved context; reject if retrieval score below threshold</span></div>
-      <div class="cq">How do you evaluate RAG quality? <span class="ans">→ retrieval: precision@k, recall. Generation: LLM-as-judge, RAGAS, faithfulness score</span></div>
-      <div class="cq">What if retrieval returns wrong chunks? <span class="ans">→ re-ranker (cross-encoder), hybrid search (dense + BM25), query rewriting</span></div>
-      <div class="cq">How do you scale vector search? <span class="ans">→ HNSW index (approximate), sharding by tenant/domain, incremental index update</span></div>
-      <div class="cq">How do you handle context window limits? <span class="ans">→ retrieve top-k, summarize if too long, MapReduce for long docs</span></div>
+      <div class="cross-q-title">Consistency &amp; Trade-offs</div>
+      <div class="cq">Consistency vs Availability? <span class="ans">→ name which side you chose and why. "AP — a stale result is better than downtime." or "CP — data loss is unacceptable here."</span></div>
+      <div class="cq">Sync vs async? <span class="ans">→ sync = simpler + consistent. Async = resilient + decoupled + higher throughput. Move non-critical writes to queue.</span></div>
+      <div class="cq">Push vs pull for fan-out? <span class="ans">→ push (fan-out on write) = low read latency, expensive for celebrities. Pull (fan-out on read) = always fresh, slow for large follow graphs.</span></div>
+    </div>
+
+    <div class="cross-q-group">
+      <div class="cross-q-title">For AI / RAG Systems</div>
+      <div class="cq">How do you prevent hallucination? <span class="ans">→ retrieval grounding: only use facts from retrieved context. Reject if retrieval score below threshold. Citation in response.</span></div>
+      <div class="cq">How do you evaluate RAG quality? <span class="ans">→ retrieval: precision@k, recall@k, MRR. Generation: faithfulness, RAGAS, LLM-as-judge.</span></div>
+      <div class="cq">Wrong chunks retrieved? <span class="ans">→ re-ranker (cross-encoder), hybrid search (dense + BM25), query rewriting, parent-child chunking</span></div>
+      <div class="cq">Scale vector search? <span class="ans">→ HNSW index (approximate), pre-filter by tenant_id before ANN, sharding by tenant/domain, incremental index update</span></div>
+      <div class="cq">Context window limit? <span class="ans">→ retrieve top-k, summarize if too long, MapReduce for very long docs, sliding window memory for chat</span></div>
+      <div class="cq">Multi-tenant isolation? <span class="ans">→ pre-filter by tenant_id in vector search (never post-filter). Separate index per tenant for largest tenants.</span></div>
     </div>
 
   </div>
 </div>
 
-<!-- AI-Specific HLD Section -->
+<!-- ──────────────── AI SYSTEM TEMPLATE ──────────────── -->
 <div class="ai-section">
-  <div class="ai-section-header">🤖 AI System HLD Template (RAG / Agent / LLM)</div>
+  <div class="ai-section-header">🤖 AI System HLD Template (RAG / Agent / LLM Chatbot)</div>
   <div class="ai-section-body">
-    <div class="step-tip">Use this when asked: "Design a RAG system / AI assistant / LLM API." Your ARIA experience directly maps here.</div>
-
-    <div class="sub-label">Standard AI/RAG HLD components</div>
-    <div class="questions">
-      <div class="question"><strong>Ingestion Pipeline:</strong> Doc loader → Chunker → Embedder → Vector Store</div>
-      <div class="question"><strong>Query Pipeline:</strong> User query → Embed query → ANN search → Re-rank → Context pack → LLM → Response</div>
-      <div class="question"><strong>Vector Store:</strong> Pinecone / Weaviate / pgvector — ANN with HNSW index</div>
-      <div class="question"><strong>LLM Gateway:</strong> rate limiting, cost tracking, model routing, fallback</div>
-      <div class="question"><strong>Guardrails:</strong> input validation, output validation, topic scoping, hallucination detection</div>
-      <div class="question"><strong>Eval Layer:</strong> retrieval metrics (precision, recall), generation metrics (faithfulness, RAGAS)</div>
-      <div class="question"><strong>Cache:</strong> semantic cache for repeated queries (embed + cosine similarity lookup)</div>
+    <div class="sub-label">Standard AI/RAG pipeline components</div>
+    <div class="items">
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Ingestion Pipeline:</strong> Doc loader → Chunker (512 tokens, 50 overlap) → Embedder → Vector Store + metadata DB</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Query Pipeline:</strong> User query → Embed query → Pre-filter by tenant → ANN search → Re-rank → Pack context → LLM → Response</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Vector Store:</strong> Qdrant / Weaviate / pgvector — HNSW index for approximate nearest neighbor</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>LLM Gateway:</strong> Rate limiting, cost tracking, model routing (LiteLLM), fallback, prompt caching</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Guardrails:</strong> Input validation, output validation, topic scoping, HITL approval for writes</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Eval Layer:</strong> Retrieval metrics (precision@k, recall@k, MRR), generation metrics (faithfulness, RAGAS)</div></div>
+      <div class="item"><span class="item-bullet dot">●</span><div><strong>Semantic Cache:</strong> Embed query → cosine similarity lookup → return cached answer if score &gt; 0.95</div></div>
     </div>
 
-    <div class="diagram-box">
-      <span class="comment">// RAG system HLD sketch</span><br>
-      <span class="node">User</span>
-      <span class="arrow"> → </span>
-      <span class="node">API GW</span>
-      <span class="arrow"> → </span>
-      <span class="node">Query Service</span>
-      <span class="arrow"> → </span>
-      <span class="node">Embed(query)</span>
-      <span class="arrow"> → </span>
-      <span class="node">Vector DB</span><br>
-      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-      <span class="arrow">↓ top-k chunks</span><br>
-      <span class="node">LLM</span>
-      <span class="arrow"> ← </span>
-      <span class="node">Prompt Builder</span>
-      <span class="arrow"> ← </span>
-      <span class="node">Re-ranker</span>
-      <span class="arrow"> ←───────────</span><br>
-      <span class="arrow">↓ response</span><br>
-      <span class="node">Guardrails</span>
-      <span class="arrow"> → </span>
-      <span class="node">Eval Logger</span>
-      <span class="arrow"> → </span>
-      <span class="node">Response Cache</span>
-      <span class="arrow"> → </span>
-      <span class="node">User</span>
+    <div class="diagram-box" style="margin-top:12px">
+      <span class="comment">// RAG system — build this one endpoint at a time (query path first, then ingestion)</span><br><br>
+      <span class="highlight">Query path:</span><br>
+      <span class="node">User</span><span class="arrow"> → </span><span class="node">API GW</span><span class="arrow"> → </span><span class="node">Query Service</span><span class="arrow"> → </span><span class="node">Embed(q)</span><span class="arrow"> → </span><span class="node">Vector DB [pre-filter: tenant_id]</span><br>
+      <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ top-k chunks</span><br>
+      <span class="node">User ← Response</span><span class="arrow"> ← </span><span class="node">Guardrails</span><span class="arrow"> ← </span><span class="node">LLM</span><span class="arrow"> ← </span><span class="node">Prompt Builder</span><span class="arrow"> ← </span><span class="node">Re-ranker</span><br><br>
+      <span class="highlight">Ingestion path:</span><br>
+      <span class="node">Upload</span><span class="arrow"> → </span><span class="node">Kafka</span><span class="arrow"> → </span><span class="node">Chunker</span><span class="arrow"> → </span><span class="node">Embedder</span><span class="arrow"> → </span><span class="node">Vector DB</span><span class="arrow"> + </span><span class="node">Metadata DB</span>
     </div>
   </div>
 </div>
 
-<!-- Golden Rules -->
+<!-- ──────────────── GOLDEN RULES ──────────────── -->
 <div class="golden-rules">
   <h3>⚡ Golden Rules</h3>
-  <div class="rule"><span>1.</span> Clarify before drawing. Every time. No exceptions.</div>
-  <div class="rule"><span>2.</span> Say "I chose X because Y, trade-off is Z" — not just "I'd use Redis."</div>
-  <div class="rule"><span>3.</span> Think out loud. The interviewer wants your reasoning more than the answer.</div>
-  <div class="rule"><span>4.</span> You don't need a perfect design. You need a defensible one.</div>
-  <div class="rule"><span>5.</span> If stuck, go back to requirements. The answer is usually hidden there.</div>
-  <div class="rule"><span>6.</span> Name numbers. "About 1000 RPS" sounds 10× more credible than "high traffic."</div>
-  <div class="rule"><span>7.</span> For AI questions: lead with your ARIA experience. It's real production work, not toy demos.</div>
+  <div class="rule"><span class="rule-num">1.</span>Clarify before drawing — always. Never jump to design before understanding the problem.</div>
+  <div class="rule"><span class="rule-num">2.</span>State 3 FRs maximum. A long list hurts more than it helps. FAANG directly evaluates your ability to focus.</div>
+  <div class="rule"><span class="rule-num">3.</span>Always quantify NFRs. "The system should be fast" means nothing. "Redirect latency under 50ms on the 10K RPS read path" shows you understand the system.</div>
+  <div class="rule"><span class="rule-num">4.</span>Skip capacity estimation unless the number changes your design. Say: "I'll skip estimation upfront and do the math if a calculation would change a design decision."</div>
+  <div class="rule"><span class="rule-num">5.</span>Build HLD one endpoint at a time. Talk while you draw. Note complexity and move on — don't solve deep dive problems during HLD.</div>
+  <div class="rule"><span class="rule-num">6.</span>Deep dives are NFR-driven. Lead with: "Let me now address the non-functional requirements I identified." Go through them one by one, state problem → solution, then pause.</div>
+  <div class="rule"><span class="rule-num">7.</span>Say "I chose X because Y — the trade-off is Z." Not just "I'd use Redis."</div>
+  <div class="rule"><span class="rule-num">8.</span>Think out loud. The interviewer wants your reasoning more than the final answer.</div>
+  <div class="rule"><span class="rule-num">9.</span>If you get stuck, go back to requirements. The answer is usually hidden there.</div>
+  <div class="rule"><span class="rule-num">10.</span>Give the interviewer room to probe. If you're monologuing, they can't get the signals they need.</div>
 </div>
 
-<div class="footer">VidyaTrack + ARIA = your two real examples. Anchor every answer in one of them.</div>
+<div class="footer">Hello Interview Delivery Framework · hellointerview.com/learn/system-design/in-a-hurry/delivery</div>
 
 </body>
 </html>
