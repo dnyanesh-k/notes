@@ -226,7 +226,24 @@ def fanout_on_write(post_id: int, user_id: int, timestamp: float):
         # Set TTL: if user hasn't loaded their feed in 7 days, cache expires
         redis.expire(f"feed:{follower_id}", 604800)
 ```
-
+```python
+# A worker pulls a specific batch of followers to process
+def process_follower_batch(poster_id, post_id, timestamp, page_token):
+    # 1. Fetch only a small chunk (e.g., 10,000 followers) using a cursor
+    followers_chunk, next_page_token = db.get_followers_paginated(poster_id, limit=10000, cursor=page_token)
+    
+    # 2. Use a Redis pipeline to send thousands of commands in ONE network trip
+    pipe = redis.pipeline()
+    for follower_id in followers_chunk:
+        pipe.zadd(f"feed:{follower_id}", {str(post_id): timestamp})
+    
+    # 3. Execute all writes simultaneously
+    pipe.execute()
+    
+    # 4. If there are more followers, queue up the next page for another worker
+    if next_page_token:
+        queue.push({"poster_id": poster_id, "post_id": post_id, "token": next_page_token})
+```
 **What is a Redis Sorted Set?**
 
 A Redis Sorted Set is a data structure where every element has:
