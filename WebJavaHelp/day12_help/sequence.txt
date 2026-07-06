@@ -1,0 +1,129 @@
+Revise 
+1. Integration of Spring MVC with hibernate.
+
+Refer to flow diagram n code n steps 
+
+1.1  Explain what happens internally , when you start(deploy) Spring MVC Hibernate based web app on the web server ?
+1.2 WC starts life cycle of D.S
+1.3  In init() -> 
+Start the SC in web app , using hybrid approach
+1.4 SC uses defaults for it's start up
+name - servletName-servlet.xml (eg - spring-servlet.xml) => master config file
+location - WEB-INF
+contents - xml tags (enable class internal annotation , base-pkg for comp scan,enable mvc annotation support)
+configure ViewResolver
+import - hibernate-persistence.xml
+DBCP bean , LocalSessionFactory bean(provider of SF) , Tx manager
+
+1.5 SC applies reflection - starts scanning - base pkg
+Controller - Service -DAO 
+
+
+2. Understand the detailed configuration of - hibernate-persistence.xml
+2.1 Configure a spring bean , Apache supplied Basic Data Source  that represents DBCP.
+Props - driver class , db url , user name ,password , init size of pool n max size of pool.
+
+2.2 Configure LocalSessionFactory as a spring bean , to provide SessionFactory , that can be autowired n injected in DAO layer.
+Props - packagesToScan : to scan the entities package.
+Depcy - data source bean created in 2.1
+
+2.3 Confgure HibernateTransactionManager as a spring bean.
+Depcy - LocalSessionFactoryBean 
+Why - To automatically manage transactions (resulting in reduced boilerplate code in DAO layer)
+
+2.4 Enable annotation support for txs
+(i.e manage txs using @Transactional)
+
+JSTL Action for URL rewriting + generating URLs relative to current ctx path
+<c:url var="attrName" value="url"/>
+
+3. Continue with earlier project n solve below objectives.
+drop database blogs
+use sample data to populate - users , categories n posts
+use day9.1 , to populate data
+RegisterUser , Add Category , Add post , Add Comment
+
+1. After client sends a request to the above web app -
+Request response flow
+
+1.1 clnt sends request
+http://host:port/ctx_path/ , method=GET
+Resp - index.jsp
+
+1.2  clnt clicks on the link "User Login"
+
+Request URL - http://localhost:8080/ctx_path/user/login , method=GET
+OR appended by jsessionid (in case of blocked cookies)
+Resp - login.jsp
+
+1.3 clnt submits the form to the same URL , with POST
+Request URL - http://localhost:8080/ctx_path/user/login , method=POST
+Process the form - authenticate blogger - forward blogger to home page , displaying blogger details.
+
+
+4. Understood the efforts  of the extensive configuration ?
+
+Any solution : YES , 
+
+5. Enter Spring Boot
+Readmes to refer 
+1."day12-data\day12_help\spring boot\spring-boot-steps.txt"
+
+2. "day12-data\day12_help\spring boot\Why n What is spring boot.txt"
+
+6.  Port existing web application with spring boot
+
+7.  While Porting earlier app to spring boot 
+Any problems noticed ?
+Exception : org.hibernate.HibernateException
+Root cause : no curnt session context configured!
+(i.e unable to get curnt session from SessionFactory , in the DAO layer)
+Reason : Spring boot  DOES NOT directly support native hibernate APIs
+(eg : org.hibernate : SessionFactory , Session, Transaction....)
+
+Soln : Replace Hibernate by it's specs : JPA (Java Persistence API)
+
+8. Replace hibernate native APIs by JPA
+Refer : "day12-data\day12_help\spring boot\diagrams\jpa-entitymgr-session-layers.png"
+
+
+9.  BUT if you notice , in all DAO layers (JDBC / Hibernate / JPA) , you are solving common problems : CRUD 
+So is there any out of box (ready made) solution ?
+YES
+
+10. Enter Spring Data JPA n use it in the existing spring boot web MVC app.
+Refer : "day12-data\day12_help\Spring Data JPA\regarding spring data JPA.txt"
+Spring Data JPA Links (Bookmark them!)
+1. API Docs : https://docs.spring.io/spring-data/jpa/docs/2.7.18/api/
+2. Ref docs : https://docs.spring.io/spring-data/jpa/docs/2.7.18/reference/html/
+
+11. Use lombok library , to reduce boilerplate code.
+Refer - "day12-data\day12_help\spring boot\Regarding Lombok.txt"
+
+12. Solve Blogs assignment from login -logout
+Refer - "day12-data\day12_help\blogs related\blogs assignment.jpg"
+
+12.1 Problem observed with default navigation technique(i.e RD's forward)
+Multiple submission issue.
+Solution -Use PRG (post-redirect-get) pattern.
+Replace forward by redirect.
+HOW ?
+eg : return "redirect:/blogger/home";
+
+12.2 To store the attributes under current request scope - Model map
+To store the attributes under current session scope - HttpSession
+To store the attributes till next redirect request only , use  RedirectAttributes
+SC can inject RedirectAttributes directly in req handling method , as a dependency.
+Use it's API
+public RedirectAttributes addFlashAttribute(String attrName , Object value)
+
+Regarding java.util.Optional Class 
+To throw custom exception , use
+public T orElseThrow(Supplier excSupplier)
+Rets a value(T) if present , otherwise throws specified exception
+
+eg : Suppose AuthenticationException : custom un chked exception
+userDao.findByEmailAndPassword(em,pass).orElseThrow(() -> new 
+AuthenticationException("invalid email or pwd"));
+
+
