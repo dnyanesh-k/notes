@@ -70,9 +70,15 @@ Without it: `synchronized` on every `getInstance()` call is slow because 99.99% 
 
 With it: the first `if (instance == null)` without lock handles the common case (already created). Only the first few nanoseconds of startup ever hit the `synchronized` block.
 
+- Checks if the instance is null before locking to save computer time.
+- Checks if the instance is null inside the lock to make sure only one object is made.
+
 **Why `volatile`?**
 
 Without `volatile`, the CPU can reorder instructions. The JVM might write the reference to `instance` before the constructor has fully finished running. Another thread sees a non-null `instance` and uses a half-constructed object. `volatile` prevents this reordering.
+
+- it Keeps the instance variable up to date across all computer processor threads.
+- Stops memory read errors during object creation.
 
 ### How Spring Implements Singleton
 
