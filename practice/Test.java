@@ -1,5 +1,26 @@
+import java.util.*;
+
+// class GCTest{
+//     Scanner sc = new Scanner(System.in);
+    
+//     @Override
+//     protected void finalize() throws Throwable{
+//       System.out.println("=====INSIDE finalize() ====");
+//       sc.close();
+//     } 
+// }
+
 public class Test {
     public static void main(String[] args) {
+
+        GCTest t1 = new GCTest();
+        t1 = null;
+        Runtime rt = Runtime.getRuntime();
+        long mb = 1024 * 1024;
+        System.out.println(rt.totalMemory() / mb);
+        System.out.println(rt.freeMemory() / mb);
+        System.out.println(rt.maxMemory() / mb);
+        // System.gc(); // request GC
         // // Get two instances of the Logger
         // Logger logger1 = Logger.getInstance();
         // Logger logger2 = Logger.getInstance();
@@ -15,12 +36,12 @@ public class Test {
         // System.out.println("Logger 1 HashCode: " + logger1.hashCode());
         // System.out.println("Logger 2 HashCode: " + logger2.hashCode());
 
-        Base base = new Base();
-        base.callSuperMethod();
-        Child child = new Child();
-        // base.doSomething();
-        // child.doSomething();
-        Base base1 = new Child();
+        // Base base = new Base();
+        // base.callSuperMethod();
+        // Child child = new Child();
+        // // base.doSomething();
+        // // child.doSomething();
+        // Base base1 = new Child();
         
         // base1.doSomething();
 
