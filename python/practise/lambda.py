@@ -168,7 +168,24 @@ new_scores = dict(map(lambda scores : (scores[0], scores[1] + 5), scores.items()
 
 
 max_score = max(scores.items(), key = lambda score : score[1])
-print(max_score)
+# print(max_score)
 
 min_score = min(scores.items(), key = lambda score : score[1])
-print(min_score)
+# print(min_score)
+
+# ============== reduce() ========================
+
+from functools import reduce
+numbers = [1, 2, 3, 4, 5, 0, 7, 6]
+
+sum = reduce(lambda acc,y : acc + y , numbers)
+# print(sum)
+
+product = reduce(lambda acc, y : acc * y, numbers)
+# print(product)
+
+max_num = reduce(lambda x , y: x if x > y else y, numbers)
+print(max_num)
+
+min_num = reduce(lambda x, y : x if x < y else y, numbers)
+print(min_num)
